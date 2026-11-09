@@ -115,7 +115,7 @@
         const c = L.shiftCalc(sh, S);
         const d = new Date(sh.start);
         return `<button class="row" data-act="edit-shift" data-id="${sh.id}">
-          <div class="l"><b>${dayLabel(d)}</b><span class="muted">${fmtTime(sh.start)}–${fmtTime(sh.end)} · ${fmtDur(c.hours)} · ${fmtInt(c.km)} km${sh.trips ? ' · ' + sh.trips + ' chuyến' : ''}</span>${c.bonus ? `<span class="muted">gồm tip/thưởng ${fmtMoney(c.bonus)}</span>` : ''}</div>
+          <div class="l"><b>${dayLabel(d)}</b><span class="muted">${sh.noClock ? (c.hours > 0 ? fmtDur(c.hours) : 'không rõ giờ') : fmtTime(sh.start) + '–' + fmtTime(sh.end) + ' · ' + fmtDur(c.hours)} · ${fmtInt(c.km)} km${sh.trips ? ' · ' + sh.trips + ' chuyến' : ''}</span>${c.bonus ? `<span class="muted">gồm tip/thưởng ${fmtMoney(c.bonus)}</span>` : ''}</div>
           <div class="amt ${sgn(c.profit)}">${fmtSigned(c.profit)}<span class="muted small" style="display:block;font-weight:500">thu ${fmtMoney(c.income)}</span></div></button>`;
       }).join('')}</section>`
       : `<div class="empty">Chưa có ca nào.<br>Bấm "Bắt đầu ca" trước khi chạy, và "Kết thúc ca" khi xong.</div>`;
@@ -136,10 +136,7 @@
     const timeBlock = `<div>
         <div class="fld"><label for="f-start">Bắt đầu</label><input id="f-start" type="datetime-local" value="${toLocalInput(start)}"></div>
         <div class="fld"><label for="f-end">Kết thúc</label><input id="f-end" type="datetime-local" value="${toLocalInput(end)}"></div></div>`;
-    const extrasBlock = mode === 'edit'
-      ? `<div class="group-h" style="padding-left:0">Tip / thưởng thêm sau</div>
-         ${(sh.extras || []).map(x => `<div class="kv"><span>${XTYPE[x.type] || 'Khác'} · thêm ${fmtDM(x.at)}</span><span><b>${fmtMoney(x.amount)}</b> <button type="button" class="chip" data-act="del-extra" data-shift="${sh.id}" data-id="${x.id}">Xoá</button></span></div>`).join('') || '<div class="hint" style="margin:0 0 6px">Chưa có.</div>'}
-         <button type="button" class="btn sm" data-act="add-extra" data-shift="${sh.id}" style="margin:6px 0 12px">＋ Thêm tip / thưởng</button>` : '';
+    const extrasBlock = mode === 'edit' ? extrasHtml(sh) : '';
     const body = `${ctx ? `<p class="muted" style="margin:0 0 10px">${ctx}</p>` : ''}
       ${mode === 'end' ? '' : intField('f-oS', 'Odo đầu ca', oS, { suf: 'km' })}
       ${intField('f-oE', 'Odo cuối ca', oE, { suf: 'km', focus: mode !== 'edit', ph: mode === 'end' ? '' : '' })}
@@ -154,10 +151,47 @@
     openSheet(title, body);
   }
 
-  // ---- Sheet: thêm tip / thưởng đến sau cho một ca (cộng vào đúng ngày chạy của ca đó)
   const XTYPE = { tipcash: 'Tip tiền mặt', tipapp: 'Tip qua app', bonus: 'Thưởng' };
   const fmtDM = iso => { const d = new Date(iso); return pad(d.getDate()) + '/' + pad(d.getMonth() + 1); };
-  const shiftChipLabel = sh => { const d = new Date(sh.start); return dayLabel(d) + ' · ' + fmtTime(sh.start); };
+  const shiftChipLabel = sh => dayLabel(new Date(sh.start)) + (sh.noClock ? '' : ' · ' + fmtTime(sh.start));
+
+  function extrasHtml(sh) {
+    return `<div class="group-h" style="padding-left:0">Tip / thưởng thêm sau</div>
+      ${(sh.extras || []).map(x => `<div class="kv"><span>${XTYPE[x.type] || 'Khác'} · thêm ${fmtDM(x.at)}</span><span><b>${fmtMoney(x.amount)}</b> <button type="button" class="chip" data-act="del-extra" data-shift="${sh.id}" data-id="${x.id}">Xoá</button></span></div>`).join('') || '<div class="hint" style="margin:0 0 6px">Chưa có.</div>'}
+      <button type="button" class="btn sm" data-act="add-extra" data-shift="${sh.id}" style="margin:6px 0 12px">＋ Thêm tip / thưởng</button>`;
+  }
+
+  // ---- Sheet "nhập bù": chọn ngày, ghi km (có thể không có odo) và giờ (có thể không nhớ)
+  function simpleSheet(sh, preset) {
+    const edit = !!sh;
+    const dKey = edit ? L.dateKey(new Date(sh.start)) : ((preset && preset.date) || L.todayKey());
+    const useOdo = edit ? (sh.km == null && sh.odoStart > 0) : !!(preset && preset.useOdo);
+    const hrs = edit ? (new Date(sh.end) - new Date(sh.start)) / 3600e3 : 0;
+    const km = edit ? L.shiftCalc(sh, S).km : '';
+    openSheet(edit ? 'Sửa ca' : 'Nhập ca đã chạy', `
+      ${dateField('f-date', 'Ngày chạy', dKey)}
+      <label class="l">Cách ghi quãng đường</label>
+      <div class="seg" id="kmseg">
+        <button type="button" class="${useOdo ? '' : 'on'}" data-act="km-mode" data-m="km">Chỉ biết số km</button>
+        <button type="button" class="${useOdo ? 'on' : ''}" data-act="km-mode" data-m="odo">Có số odo</button></div>
+      <div id="box-km" ${useOdo ? 'hidden' : ''}>${intField('f-km', 'Số km đã chạy Grab', useOdo ? '' : km, { suf: 'km', focus: !edit })}</div>
+      <div id="box-odo" ${useOdo ? '' : 'hidden'}>
+        ${intField('f-oS', 'Odo đầu ca', edit && useOdo ? sh.odoStart : '', { suf: 'km' })}
+        ${intField('f-oE', 'Odo cuối ca', edit && useOdo ? sh.odoEnd : '', { suf: 'km' })}</div>
+      <div class="fld"><label for="f-hours">Số giờ chạy (tuỳ chọn)</label>
+        <div class="inwrap noK"><input id="f-hours" inputmode="decimal" autocomplete="off" placeholder="vd 2,5" value="${hrs > 0 ? String(Math.round(hrs * 100) / 100).replace('.', ',') : ''}"><span class="suf">giờ</span></div>
+        <div class="hint">Bỏ trống nếu không nhớ: ca này sẽ không được tính vào lãi/giờ.</div></div>
+      ${moneyField('f-net', 'Thu nhập ròng trên app Grab', edit ? sh.net : '')}
+      ${moneyField('f-bonus', 'Tip / thưởng (nếu có)', edit ? (sh.bonus || '') : '')}
+      ${intField('f-trips', 'Số chuyến (tuỳ chọn)', edit ? (sh.trips || '') : '', { suf: 'chuyến' })}
+      ${edit ? extrasHtml(sh) : ''}
+      <div class="err" id="err"></div>
+      <button class="btn primary lg" data-act="save-shift2" data-id="${edit ? sh.id : ''}">${edit ? 'Lưu thay đổi' : 'Lưu ca'}</button>
+      ${edit ? `<button class="link danger" data-act="del-shift" data-id="${sh.id}">Xoá ca này</button>`
+        : `<button class="btn" style="margin-top:10px" data-act="save-shift2" data-next="1">Lưu và nhập ngày kế tiếp</button>`}`);
+  }
+
+  // ---- Sheet: thêm tip / thưởng đến sau cho một ca (cộng vào đúng ngày chạy của ca đó)
 
   function extraSheet(shiftId) {
     let list = sortedDesc(S.shifts, x => x.start).slice(0, 7);
@@ -484,8 +518,47 @@
   };
   A['cancel-shift'] = () => { if (confirm('Huỷ ca đang chạy? Ca này sẽ không được lưu.')) { S.active = null; save(); render(); } };
   A['end-shift'] = () => shiftSheet('end');
-  A['manual-shift'] = () => shiftSheet('manual');
-  A['edit-shift'] = el => { const sh = S.shifts.find(x => x.id === el.dataset.id); if (sh) shiftSheet('edit', sh); };
+  A['manual-shift'] = () => simpleSheet(null);
+  A['edit-shift'] = el => { const sh = S.shifts.find(x => x.id === el.dataset.id); if (sh) (sh.noClock ? simpleSheet(sh) : shiftSheet('edit', sh)); };
+  A['km-mode'] = el => {
+    const odo = el.dataset.m === 'odo';
+    $('#kmseg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el));
+    $('#box-km').hidden = odo; $('#box-odo').hidden = !odo;
+  };
+  A['save-shift2'] = el => {
+    const date = val('f-date');
+    if (!date) return setErr('Chọn ngày chạy.');
+    const useOdo = $('#kmseg .on').dataset.m === 'odo';
+    let km = null, oS = null, oE = null, kmv;
+    if (useOdo) {
+      oS = getInt('f-oS'); oE = getInt('f-oE');
+      if (isNaN(oS) || isNaN(oE) || oS <= 0) return setErr('Nhập odo đầu và odo cuối.');
+      if (oE <= oS) return setErr('Odo cuối phải lớn hơn odo đầu.');
+      kmv = oE - oS;
+    } else {
+      km = getInt('f-km');
+      if (isNaN(km) || km <= 0) return setErr('Nhập số km đã chạy.');
+      kmv = km;
+    }
+    const net = getInt('f-net');
+    if (isNaN(net)) return setErr('Nhập thu nhập ròng trên app (nhập 0 nếu không có).');
+    const hrs = val('f-hours') ? getDec('f-hours') : 0;
+    if (isNaN(hrs) || hrs < 0 || hrs > 24) return setErr('Số giờ không hợp lệ (0–24).');
+    if (kmv > 400 && !confirm(`Ca này chạy ${fmtInt(kmv)} km. Đúng không?`)) return;
+    const start = new Date(date + 'T12:00:00');
+    const data = {
+      start: start.toISOString(), end: new Date(start.getTime() + hrs * 3600e3).toISOString(), noClock: true,
+      km, odoStart: oS, odoEnd: oE, net, bonus: getInt('f-bonus') || 0, trips: getInt('f-trips') || 0,
+    };
+    if (el.dataset.id) Object.assign(S.shifts.find(x => x.id === el.dataset.id), data);
+    else S.shifts.push(Object.assign({ id: uid(), fuelRate: L.fuelRate(S).rate, wearRate: Number(S.settings.wearPerKm) || 0 }, data));
+    save(); closeSheet(); render();
+    if (el.dataset.next) {
+      const nd = L.keyToDate(date); nd.setDate(nd.getDate() + 1);
+      simpleSheet(null, { date: L.dateKey(nd), useOdo });
+      toast('Đã lưu ' + dayLabel(L.keyToDate(date)) + '. Nhập ngày kế tiếp.');
+    } else toast('Đã lưu ca');
+  };
   A['del-shift'] = el => { if (confirm('Xoá ca này?')) { S.shifts = S.shifts.filter(x => x.id !== el.dataset.id); save(); closeSheet(); render(); toast('Đã xoá ca'); } };
   A['save-shift'] = el => {
     const mode = el.dataset.mode;
@@ -534,7 +607,7 @@
   A['del-extra'] = el => {
     const sh = S.shifts.find(x => x.id === el.dataset.shift); if (!sh) return;
     sh.extras = (sh.extras || []).filter(x => x.id !== el.dataset.id);
-    save(); render(); shiftSheet('edit', sh);
+    save(); render(); if (sh.noClock) simpleSheet(sh); else shiftSheet('edit', sh);
   };
 
   // Chi

@@ -76,7 +76,8 @@
 
   // ---------- Một ca ----------
   function shiftCalc(sh, s, curFuelRate) {
-    const km = Math.max(0, (sh.odoEnd || 0) - (sh.odoStart || 0));
+    // Ca nhập bù có thể chỉ có số km (không có odo)
+    const km = sh.km != null ? Math.max(0, sh.km) : Math.max(0, (sh.odoEnd || 0) - (sh.odoStart || 0));
     const hours = Math.max(0, (new Date(sh.end) - new Date(sh.start)) / 3600000);
     const fr = sh.fuelRate != null ? sh.fuelRate : (curFuelRate != null ? curFuelRate : fuelRate(s).rate);
     const wr = sh.wearRate != null ? sh.wearRate : (Number(s.settings.wearPerKm) || 0);
@@ -146,7 +147,7 @@
     const inR = k => k >= from && k <= to;
     const r = {
       income: 0, net: 0, bonus: 0, fuel: 0, wear: 0, rideExp: 0, personal: 0, saving: 0,
-      km: 0, hours: 0, trips: 0, nShifts: 0, nExpenses: 0,
+      km: 0, hours: 0, trips: 0, nShifts: 0, nExpenses: 0, untimedProfit: 0,
       byDay: {}, rideCats: {}, personalCats: {}, savingCats: {},
     };
     const cur = fuelRate(s).rate;
@@ -157,6 +158,7 @@
       r.income += c.income; r.net += c.net; r.bonus += c.bonus;
       r.fuel += c.fuel; r.wear += c.wear; r.km += c.km; r.hours += c.hours;
       r.trips += sh.trips || 0; r.nShifts++;
+      if (c.hours <= 0) r.untimedProfit += c.profit; // ca không rõ giờ: không tính vào lãi/giờ
       addTo(r.byDay, k, c.profit);
     });
     s.expenses.forEach(e => {
@@ -171,7 +173,7 @@
     r.totalSpend = r.cost + r.personal;            // tổng chi (chạy xe + cá nhân)
     r.remain = r.profit - r.personal - r.saving;   // còn lại chưa phân bổ
     r.perKm = r.km > 0 ? r.profit / r.km : 0;
-    r.perHour = r.hours > 0 ? r.profit / r.hours : 0;
+    r.perHour = r.hours > 0 ? (r.profit - r.untimedProfit) / r.hours : 0;
     return r;
   }
 
