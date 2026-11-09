@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sổ Thu Chi Grab</title>
+  <meta name="theme-color" content="#0b8f5a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Thu chi Grab">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top"><h1 id="title">Ca chạy</h1></header>
+  <main id="view"></main>
+
+  <nav id="nav" aria-label="Điều hướng">
+    <button data-act="tab" data-tab="overview">
+      <svg viewBox="0 0 24 24"><path d="M5 20V11M12 20V4M19 20v-6"/></svg><span>Tổng quan</span>
+    </button>
+    <button data-act="tab" data-tab="shift">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Ca chạy</span>
+    </button>
+    <button data-act="tab" data-tab="spend">
+      <svg viewBox="0 0 24 24"><path d="M3 7h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zm0 0V6a2 2 0 0 1 2-2h12"/><circle cx="16.5" cy="13.5" r="1"/></svg><span>Chi</span>
+    </button>
+    <button data-act="tab" data-tab="car">
+      <svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg><span>Xe</span>
+    </button>
+    <button data-act="tab" data-tab="settings">
+      <svg viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg><span>Cài đặt</span>
+    </button>
+  </nav>
+
+  <div id="toast" role="status"></div>
+  <input type="file" id="importFile" accept="application/json,.json" hidden>
+
+  <script src="logic.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

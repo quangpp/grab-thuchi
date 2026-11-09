@@ -1,0 +1,629 @@
+/* Sổ Thu Chi Grab — giao diện. Toàn bộ dữ liệu lưu trên máy (localStorage), có sao lưu ra file JSON. */
+(function () {
+  'use strict';
+  const L = window.Logic;
+  const KEY = 'grab-tracker-v1';
+  const DAYS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+  const TITLES = { overview: 'Tổng quan', shift: 'Ca chạy', spend: 'Thu chi', car: 'Xe', settings: 'Cài đặt' };
+
+  let S = load();
+  let tab = 'shift';
+  let period = { kind: 'week', off: 0 };
+  let expType = 'ride';
+
+  // ---------------------------------------------------------------- lưu trữ
+  function load() {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) return L.migrate(JSON.parse(raw));
+    } catch (e) { /* dùng dữ liệu rỗng */ }
+    return L.emptyState();
+  }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(S)); return true; }
+    catch (e) { toast('⚠️ Không lưu được dữ liệu trên máy này!'); return false; }
+  }
+
+  // ---------------------------------------------------------------- tiện ích
+  const $ = (s, r) => (r || document).querySelector(s);
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const pad = n => String(n).padStart(2, '0');
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmtInt = L.fmtInt, fmtMoney = L.fmtMoney, fmtSigned = L.fmtSigned, fmtShort = L.fmtShort, fmtDur = L.fmtDur;
+  const fmtTime = iso => { const d = new Date(iso); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+  const dayLabel = d => DAYS[d.getDay()] + ' ' + pad(d.getDate()) + '/' + pad(d.getMonth() + 1);
+  const keyLabel = k => dayLabel(L.keyToDate(k));
+  const toLocalInput = iso => { const d = new Date(iso); return L.dateKey(d) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+  const fromLocalInput = v => (v ? new Date(v).toISOString() : null);
+  const sgn = n => (Math.round(n) >= 0 ? 'pos' : 'neg');
+  const val = id => { const e = $('#' + id); return e ? e.value.trim() : ''; };
+  const getInt = id => { const t = val(id).replace(/\D/g, ''); return t ? Number(t) : NaN; };
+  const getDec = id => { const t = val(id).replace(',', '.'); const v = parseFloat(t); return isFinite(v) ? v : NaN; };
+  const sortedDesc = (arr, f) => arr.slice().sort((a, b) => (f(a) < f(b) ? 1 : f(a) > f(b) ? -1 : 0));
+
+  let toastTimer;
+  function toast(msg) {
+    const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  // ---------------------------------------------------------------- ô nhập
+  const moneyField = (id, label, v, opt) => {
+    opt = opt || {};
+    return `<div class="fld"><label for="${id}">${label}</label><div class="inwrap"><input id="${id}" class="money" inputmode="numeric" autocomplete="off" placeholder="${opt.ph || '0'}" value="${v != null && v !== '' ? fmtInt(v) : ''}" ${opt.focus ? 'data-focus' : ''}><span class="suf" style="right:${opt.noZeros ? 12 : 76}px">đ</span>${opt.noZeros ? '' : `<button type="button" class="k" data-act="zeros" data-t="${id}">000</button>`}</div>${opt.hint ? `<div class="hint">${opt.hint}</div>` : ''}</div>`;
+  };
+  const intField = (id, label, v, opt) => {
+    opt = opt || {};
+    return `<div class="fld"><label for="${id}">${label}</label><div class="inwrap noK"><input id="${id}" class="int" inputmode="numeric" autocomplete="off" placeholder="${opt.ph || ''}" value="${v != null && v !== '' ? fmtInt(v) : ''}" ${opt.focus ? 'data-focus' : ''}><span class="suf">${opt.suf || ''}</span></div>${opt.hint ? `<div class="hint">${opt.hint}</div>` : ''}</div>`;
+  };
+  const textField = (id, label, v, ph) => `<div class="fld"><label for="${id}">${label}</label><input id="${id}" type="text" autocomplete="off" placeholder="${esc(ph || '')}" value="${esc(v || '')}"></div>`;
+  const dateField = (id, label, v) => `<div class="fld"><label for="${id}">${label}</label><input id="${id}" type="date" value="${v}"></div>`;
+
+  // ---------------------------------------------------------------- bottom sheet
+  function openSheet(title, body) {
+    closeSheet();
+    const root = document.createElement('div');
+    root.id = 'sheet-root';
+    root.innerHTML = `<div class="sheet-bg" data-act="close-sheet"></div><div class="sheet" role="dialog" aria-label="${esc(title)}"><div class="sheet-head"><h3>${esc(title)}</h3><button class="x" data-act="close-sheet" aria-label="Đóng">✕</button></div><div class="sheet-body">${body}</div></div>`;
+    document.body.appendChild(root);
+    document.body.classList.add('noscroll');
+    const f = root.querySelector('[data-focus]'); if (f) setTimeout(() => f.focus(), 60);
+  }
+  function closeSheet() {
+    const r = $('#sheet-root'); if (r) r.remove();
+    document.body.classList.remove('noscroll');
+  }
+  function setErr(msg) { const e = $('#err'); if (e) { e.textContent = msg || ''; if (msg) e.scrollIntoView({ block: 'nearest' }); } return false; }
+
+  // ---------------------------------------------------------------- màn hình: CA CHẠY
+  function elapsed(startIso) {
+    const mins = Math.max(0, Math.floor((Date.now() - new Date(startIso)) / 60000));
+    return Math.floor(mins / 60) + ':' + pad(mins % 60);
+  }
+
+  function viewShift() {
+    const cur = L.lastKnownOdo(S);
+    let top;
+    if (S.active) {
+      const a = S.active;
+      top = `<section class="card run"><div class="eyebrow">Đang chạy</div>
+        <div class="big" id="timer">${elapsed(a.start)}</div>
+        <div class="muted">Bắt đầu ${fmtTime(a.start)} · odo đầu ${fmtInt(a.odoStart)} km</div>
+        <button class="btn primary lg" data-act="end-shift">Kết thúc ca</button>
+        <button class="link danger" data-act="cancel-shift">Huỷ ca này</button></section>`;
+    } else {
+      top = `<section class="card"><h2>Bắt đầu ca</h2>
+        ${intField('startOdo', 'Odo hiện tại', '', { ph: cur ? fmtInt(cur) : 'vd 12.345', suf: 'km', hint: cur ? `Nhìn đồng hồ xe rồi nhập. Odo gần nhất đã ghi: ${fmtInt(cur)} km.` : 'Nhìn đồng hồ xe rồi nhập. Lần đầu dùng: số này sẽ làm mốc khởi đầu.' })}
+        <button class="btn primary lg" data-act="start-shift">Bắt đầu ca</button>
+        <button class="link" data-act="manual-shift">Quên bấm? Thêm ca đã chạy</button></section>`;
+    }
+
+    const t = L.todayKey();
+    const td = L.summarize(S, t, t);
+    const today = td.nShifts
+      ? `<section class="card"><div class="eyebrow">Hôm nay</div>
+          <div class="metrics" style="margin-top:8px">
+            <div class="metric"><div class="k">Tổng thu</div><div class="v">${fmtMoney(td.income)}</div></div>
+            <div class="metric"><div class="k">Lãi ca chạy</div><div class="v ${sgn(td.profit)}">${fmtSigned(td.profit)}</div></div>
+            <div class="metric"><div class="k">Km / giờ</div><div class="v">${fmtInt(td.km)} km · ${fmtDur(td.hours)}</div></div>
+            <div class="metric"><div class="k">Lãi / giờ</div><div class="v">${fmtMoney(td.perHour)}</div></div>
+          </div></section>` : '';
+
+    const recent = sortedDesc(S.shifts, x => x.start).slice(0, 12);
+    const list = recent.length
+      ? `<section class="card tight"><div class="group-h">Các ca gần đây</div>${recent.map(sh => {
+        const c = L.shiftCalc(sh, S);
+        const d = new Date(sh.start);
+        return `<button class="row" data-act="edit-shift" data-id="${sh.id}">
+          <div class="l"><b>${dayLabel(d)}</b><span class="muted">${fmtTime(sh.start)}–${fmtTime(sh.end)} · ${fmtDur(c.hours)} · ${fmtInt(c.km)} km${sh.trips ? ' · ' + sh.trips + ' chuyến' : ''}</span></div>
+          <div class="amt ${sgn(c.profit)}">${fmtSigned(c.profit)}<span class="muted small" style="display:block;font-weight:500">thu ${fmtMoney(c.income)}</span></div></button>`;
+      }).join('')}</section>`
+      : `<div class="empty">Chưa có ca nào.<br>Bấm "Bắt đầu ca" trước khi chạy, và "Kết thúc ca" khi xong.</div>`;
+    return top + today + list;
+  }
+
+  // ---- Sheet: kết thúc / thêm / sửa ca
+  function shiftSheet(mode, sh) {
+    const now = new Date();
+    let start, end, oS = '', oE = '', net = '', bonus = '', trips = '';
+    if (mode === 'end') { start = S.active.start; end = now.toISOString(); oS = S.active.odoStart; }
+    else if (mode === 'edit') { start = sh.start; end = sh.end; oS = sh.odoStart; oE = sh.odoEnd; net = sh.net; bonus = sh.bonus || ''; trips = sh.trips || ''; }
+    else { end = now.toISOString(); start = new Date(now - 2 * 3600e3).toISOString(); }
+    const title = mode === 'end' ? 'Kết thúc ca' : mode === 'edit' ? 'Sửa ca' : 'Thêm ca đã chạy';
+    const ctx = mode === 'end' ? `Odo đầu ca: <b>${fmtInt(oS)} km</b>` : '';
+    const timeBlock = `<div class="grid2">
+        <div class="fld"><label for="f-start">Bắt đầu</label><input id="f-start" type="datetime-local" value="${toLocalInput(start)}"></div>
+        <div class="fld"><label for="f-end">Kết thúc</label><input id="f-end" type="datetime-local" value="${toLocalInput(end)}"></div></div>`;
+    const body = `${ctx ? `<p class="muted" style="margin:0 0 10px">${ctx}</p>` : ''}
+      ${mode === 'end' ? '' : intField('f-oS', 'Odo đầu ca', oS, { suf: 'km' })}
+      ${intField('f-oE', 'Odo cuối ca', oE, { suf: 'km', focus: mode !== 'edit', ph: mode === 'end' ? '' : '' })}
+      ${moneyField('f-net', 'Thu nhập ròng trên app Grab', net, { hint: 'Số app đã trừ phí sàn.' })}
+      ${moneyField('f-bonus', 'Thưởng / tip (nếu chưa nằm trong số trên)', bonus)}
+      ${intField('f-trips', 'Số chuyến (tuỳ chọn)', trips, { suf: 'chuyến' })}
+      ${mode === 'end' ? `<details><summary>Sửa giờ hoặc odo đầu ca</summary>${timeBlock}${intField('f-oS', 'Odo đầu ca', oS, { suf: 'km' })}</details>` : timeBlock}
+      <div class="err" id="err"></div>
+      <button class="btn primary lg" data-act="save-shift" data-mode="${mode}" data-id="${sh ? sh.id : ''}">${mode === 'edit' ? 'Lưu thay đổi' : 'Lưu ca'}</button>
+      ${mode === 'edit' ? `<button class="link danger" data-act="del-shift" data-id="${sh.id}">Xoá ca này</button>` : ''}`;
+    openSheet(title, body);
+  }
+
+  function showShiftResult(sh) {
+    const c = L.shiftCalc(sh, S);
+    openSheet('Kết quả ca vừa chạy', `
+      <div class="center" style="margin:6px 0 14px">
+        <div class="eyebrow">Lãi ca này</div>
+        <div class="big ${sgn(c.profit)}">${fmtSigned(c.profit)}</div>
+        <div class="muted">${fmtInt(c.km)} km · ${fmtDur(c.hours)}</div></div>
+      <div class="flow">
+        <div class="ln"><span>Thu (app${c.bonus ? ' + thưởng/tip' : ''})</span><b>${fmtMoney(c.income)}</b></div>
+        <div class="ln"><span class="muted">− Xăng (ước theo km)</span><span>${fmtMoney(c.fuel)}</span></div>
+        <div class="ln"><span class="muted">− Hao mòn xe (ước theo km)</span><span>${fmtMoney(c.wear)}</span></div>
+        <div class="ln sum"><span>Lãi</span><span class="${sgn(c.profit)}">${fmtSigned(c.profit)}</span></div>
+      </div>
+      <div class="metrics" style="margin:14px 0">
+        <div class="metric"><div class="k">Lãi / km</div><div class="v">${fmtMoney(c.perKm)}</div></div>
+        <div class="metric"><div class="k">Lãi / giờ</div><div class="v">${fmtMoney(c.perHour)}</div></div></div>
+      <button class="btn primary" data-act="close-sheet">Xong</button>`);
+  }
+
+  // ---------------------------------------------------------------- màn hình: CHI
+  function viewSpend() {
+    const m = L.monthRange(0);
+    const sum = L.summarize(S, m.from, m.to);
+    const head = `<section class="card">
+      <div class="eyebrow">${m.label}</div>
+      <div class="metrics" style="margin-top:8px">
+        <div class="metric"><div class="k"><span class="badge ride">Chạy xe</span></div><div class="v">${fmtMoney(sum.rideExp)}</div><div class="muted small">chưa gồm xăng, hao mòn</div></div>
+        <div class="metric"><div class="k"><span class="badge personal">Cá nhân</span></div><div class="v">${fmtMoney(sum.personal)}</div><div class="muted small">lấy từ tiền Grab</div></div>
+        <div class="metric"><div class="k"><span class="badge saving">Để dành</span></div><div class="v">${fmtMoney(sum.saving)}</div></div>
+        <div class="metric"><div class="k">Lợi nhuận chạy xe</div><div class="v ${sgn(sum.profit)}">${fmtSigned(sum.profit)}</div></div>
+      </div>
+      <button class="btn primary lg" data-act="add-expense">+ Thêm khoản chi</button></section>`;
+    const items = sortedDesc(S.expenses, e => e.date + e.id).slice(0, 80);
+    if (!items.length) return head + `<div class="empty">Chưa có khoản chi nào.<br>Ghi cả khoản chạy xe (rửa xe, gửi xe...) lẫn tiền bạn lấy từ thu nhập Grab để dùng riêng.</div>`;
+    const groups = {};
+    items.forEach(e => (groups[e.date] = groups[e.date] || []).push(e));
+    const html = Object.keys(groups).sort().reverse().map(k =>
+      `<div class="group-h">${keyLabel(k)}</div>` + groups[k].map(e =>
+        `<button class="row" data-act="edit-expense" data-id="${e.id}"><div class="l"><span class="badge ${e.type}">${L.TYPE_LABEL[e.type]}</span><b>${esc(e.category)}</b>${e.note ? `<span class="muted">${esc(e.note)}</span>` : ''}</div><div class="amt">${fmtMoney(e.amount)}</div></button>`).join('')
+    ).join('');
+    return head + `<section class="card tight">${html}</section>`;
+  }
+
+  function catsFor(type) {
+    const used = S.expenses.filter(e => e.type === type).map(e => e.category);
+    return Array.from(new Set(L.CATS[type].concat(used)));
+  }
+  function chipsHtml(type, selected) {
+    return catsFor(type).map(c => `<button type="button" class="chip ${c === selected ? 'on' : ''}" data-act="pick-cat" data-c="${esc(c)}">${esc(c)}</button>`).join('');
+  }
+  function expenseSheet(e) {
+    expType = e ? e.type : (expType || 'ride');
+    const sel = e ? e.category : catsFor(expType)[0];
+    const body = `
+      ${moneyField('f-amt', 'Số tiền', e ? e.amount : '', { focus: !e })}
+      <label class="l">Loại khoản chi</label>
+      <div class="seg t-${expType}" id="seg">${['ride', 'personal', 'saving'].map(t => `<button type="button" class="${t === expType ? 'on' : ''}" data-act="exp-type" data-t="${t}">${L.TYPE_LABEL[t]}</button>`).join('')}</div>
+      <div class="hint" id="type-hint" style="margin:-6px 0 10px">${typeHint(expType)}</div>
+      <label class="l">Danh mục</label>
+      <div class="chips" id="chips">${chipsHtml(expType, sel)}</div>
+      <input type="hidden" id="f-cat" value="${esc(sel)}">
+      ${textField('f-cat2', 'Hoặc gõ danh mục khác', '', 'ví dụ: Thuốc, Học phí...')}
+      ${textField('f-note', 'Ghi chú (tuỳ chọn)', e ? e.note : '', '')}
+      ${dateField('f-date', 'Ngày', e ? e.date : L.todayKey())}
+      <div class="err" id="err"></div>
+      <button class="btn primary lg" data-act="save-expense" data-id="${e ? e.id : ''}">${e ? 'Lưu thay đổi' : 'Lưu khoản chi'}</button>
+      ${e ? `<button class="link danger" data-act="del-expense" data-id="${e.id}">Xoá khoản này</button>` : ''}`;
+    openSheet(e ? 'Sửa khoản chi' : 'Thêm khoản chi', body);
+  }
+  function typeHint(t) {
+    return t === 'ride' ? 'Chi phí để chạy xe: trừ vào lợi nhuận. (Xăng và hao mòn đã tự tính theo km, đừng nhập lại.)'
+      : t === 'personal' ? 'Tiền lấy từ thu nhập Grab để dùng riêng. Không làm giảm lợi nhuận chạy xe, chỉ giảm số còn lại.'
+        : 'Tiền bạn tách ra để dành từ thu nhập Grab.';
+  }
+
+  // ---------------------------------------------------------------- màn hình: XE
+  function viewCar() {
+    const cur = L.lastKnownOdo(S);
+    const oil = L.oilStatus(S);
+    const fr = L.fuelRate(S);
+    const sug = L.wearSuggestion(S);
+
+    let oilCard;
+    if (!oil.has) {
+      oilCard = `<div class="alert"><div>🛢️ <b>Chưa có mốc thay nhớt.</b> Sau khi thay, bấm "Ghi thay nhớt" để bắt đầu đếm km (nhắc sau mỗi ${fmtInt(oil.iv)} km).</div></div>`;
+    } else {
+      const cls = oil.remaining < 0 ? 'over' : oil.remaining <= 300 ? 'warn' : '';
+      oilCard = `<section class="card"><div class="eyebrow">Thay nhớt</div>
+        <div class="progress ${cls}"><i style="width:${Math.round(oil.pct * 100)}%"></i></div>
+        <div class="kv"><span>Đã đi từ lần thay (odo ${fmtInt(oil.lastOdo)})</span><b>${fmtInt(oil.since)} km</b></div>
+        <div class="kv"><span>${oil.remaining >= 0 ? 'Còn lại tới hạn' : 'Quá hạn'}</span><b class="${oil.remaining < 0 ? 'neg' : ''}">${fmtInt(Math.abs(oil.remaining))} km</b></div></section>`;
+    }
+
+    const head = `<section class="card"><div class="eyebrow">Odo gần nhất</div>
+      <div class="big">${fmtInt(cur)} <span class="muted" style="font-size:18px">km</span></div>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn" data-act="add-odo">Cập nhật odo</button>
+        <button class="btn" data-act="add-fill">⛽ Đổ xăng</button></div>
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn" data-act="add-maint" data-item="Nhớt">🛢️ Ghi thay nhớt</button>
+        <button class="btn" data-act="add-maint">🔧 Bảo dưỡng khác</button></div></section>`;
+
+    const rates = `<section class="card"><div class="eyebrow">Đơn giá đang dùng để tính lãi</div>
+      <div class="kv" style="margin-top:6px"><span>Xăng</span><b>${fmtInt(fr.rate)}đ/km</b></div>
+      <div class="hint" style="margin:-2px 0 8px">${fr.source === 'learned' ? `Học từ ${fr.n} lần đổ đầy bình (${fmtInt(fr.dist)} km).` : `Ước tính: ${S.settings.fuelL100} lít/100km × ${fmtInt(S.settings.fuelPrice)}đ/lít. Đổ đầy bình ≥ 2 lần (kèm odo) thì tool tự tính số thật.`}</div>
+      <div class="kv"><span>Hao mòn xe</span><b>${fmtInt(S.settings.wearPerKm)}đ/km</b></div>
+      ${sug ? `<div class="alert ok" style="margin:8px 0 0"><div>Chi bảo dưỡng thật ≈ <b>${fmtInt(sug.perKm)}đ/km</b> (${fmtMoney(sug.cost)} / ${fmtInt(sug.km)} km). Bạn có thể chỉnh trong Cài đặt.</div></div>` : `<div class="hint">Sau vài lần bảo dưỡng (≥ 3.000 km) tool sẽ gợi ý chỉnh lại số này.</div>`}</section>`;
+
+    // đổ xăng
+    const fills = S.fills.slice().sort((a, b) => a.odo - b.odo);
+    const withStats = fills.map((f, i) => {
+      const prev = fills.slice(0, i).reverse().find(p => p.full !== false);
+      const km = prev && f.full !== false ? f.odo - prev.odo : null;
+      return { f, km, per: km > 0 ? f.amount / km : null };
+    }).reverse().slice(0, 15);
+    const fillList = withStats.length ? `<section class="card tight"><div class="group-h">Lịch sử đổ xăng</div>${withStats.map(x =>
+      `<button class="row" data-act="edit-fill" data-id="${x.f.id}"><div class="l"><b>${keyLabel(x.f.date)}</b><span class="muted">odo ${fmtInt(x.f.odo)}${x.f.liters ? ' · ' + x.f.liters + ' lít' : ''}${x.f.full === false ? ' · chưa đầy' : ''}${x.km ? ` · ${fmtInt(x.km)} km · ${fmtInt(x.per)}đ/km` : ''}</span></div><div class="amt">${fmtMoney(x.f.amount)}</div></button>`).join('')}</section>` : '';
+
+    const maint = sortedDesc(S.maint, m => m.odo).slice(0, 15);
+    const maintList = maint.length ? `<section class="card tight"><div class="group-h">Lịch sử bảo dưỡng</div>${maint.map(m =>
+      `<button class="row" data-act="edit-maint" data-id="${m.id}"><div class="l"><b>${esc(m.item)}</b><span class="muted">${keyLabel(m.date)} · odo ${fmtInt(m.odo)}${m.note ? ' · ' + esc(m.note) : ''}</span></div><div class="amt">${fmtMoney(m.cost)}</div></button>`).join('')}</section>` : '';
+
+    return head + oilCard + rates + fillList + maintList;
+  }
+
+  function odoSheet() {
+    openSheet('Cập nhật odo', `
+      ${intField('f-odo', 'Số odo hiện tại', '', { suf: 'km', focus: true, ph: fmtInt(L.lastKnownOdo(S)) })}
+      <div class="hint" style="margin:-6px 0 10px">Dùng khi bạn muốn ghi lại odo thật (ví dụ ngày không chạy Grab) để nhắc bảo dưỡng chính xác.</div>
+      ${dateField('f-date', 'Ngày', L.todayKey())}
+      <div class="err" id="err"></div>
+      <button class="btn primary lg" data-act="save-odo">Lưu odo</button>`);
+  }
+
+  function fillSheet(f) {
+    openSheet(f ? 'Sửa lần đổ xăng' : 'Đổ xăng', `
+      ${moneyField('f-amt', 'Số tiền đổ', f ? f.amount : '', { focus: !f })}
+      ${intField('f-odo', 'Odo lúc đổ', f ? f.odo : '', { suf: 'km', ph: fmtInt(L.lastKnownOdo(S)) })}
+      <div class="fld"><label for="f-liters">Số lít (tuỳ chọn)</label><input id="f-liters" inputmode="decimal" class="dec" placeholder="vd 2,8" value="${f && f.liters ? String(f.liters).replace('.', ',') : ''}"></div>
+      <label class="check"><input type="checkbox" id="f-full" ${!f || f.full !== false ? 'checked' : ''}> Đã đổ đầy bình</label>
+      <div class="hint" style="margin:-6px 0 10px">Đổ đầy bình mỗi lần thì tool tính được đơn giá xăng/km chính xác.</div>
+      ${dateField('f-date', 'Ngày', f ? f.date : L.todayKey())}
+      <div class="err" id="err"></div>
+      <button class="btn primary lg" data-act="save-fill" data-id="${f ? f.id : ''}">${f ? 'Lưu thay đổi' : 'Lưu'}</button>
+      ${f ? `<button class="link danger" data-act="del-fill" data-id="${f.id}">Xoá</button>` : ''}`);
+  }
+
+  function maintSheet(m, preset) {
+    const item = m ? m.item : (preset || 'Nhớt');
+    openSheet(m ? 'Sửa bảo dưỡng' : 'Ghi bảo dưỡng', `
+      <label class="l">Hạng mục</label>
+      <div class="chips" id="chips">${L.MAINT_ITEMS.map(i => `<button type="button" class="chip ${i === item ? 'on' : ''}" data-act="pick-item" data-c="${esc(i)}">${esc(i)}</button>`).join('')}</div>
+      <input type="hidden" id="f-item" value="${esc(item)}">
+      ${moneyField('f-amt', 'Chi phí (gồm công)', m ? m.cost : '', { focus: !m })}
+      ${intField('f-odo', 'Odo lúc làm', m ? m.odo : L.lastKnownOdo(S), { suf: 'km' })}
+      ${textField('f-note', 'Ghi chú (tuỳ chọn)', m ? m.note : '', 'loại nhớt, tiệm...')}
+      ${dateField('f-date', 'Ngày', m ? m.date : L.todayKey())}
+      <div class="err" id="err"></div>
+      <button class="btn primary lg" data-act="save-maint" data-id="${m ? m.id : ''}">${m ? 'Lưu thay đổi' : 'Lưu'}</button>
+      ${m ? `<button class="link danger" data-act="del-maint" data-id="${m.id}">Xoá</button>` : ''}`);
+  }
+
+  // ---------------------------------------------------------------- màn hình: TỔNG QUAN
+  function chartSVG(items, kind) {
+    const W = 320, H = 132, padT = 16, padB = 18;
+    const vals = items.map(i => i.value);
+    const mx = Math.max(0, ...vals), mn = Math.min(0, ...vals);
+    const span = (mx - mn) || 1, plotH = H - padT - padB;
+    const y0 = padT + (mx / span) * plotH;
+    const bw = W / items.length;
+    let out = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Lợi nhuận theo ${kind === 'all' ? 'tháng' : 'ngày'}"><line x1="0" x2="${W}" y1="${y0}" y2="${y0}"/>`;
+    items.forEach((it, i) => {
+      const h = Math.max(it.value === 0 ? 0 : 1.5, Math.abs(it.value) / span * plotH);
+      const x = i * bw + bw * 0.16, w = bw * 0.68;
+      const y = it.value >= 0 ? y0 - h : y0;
+      out += `<rect class="${it.value >= 0 ? 'pos' : 'neg'}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2"/>`;
+      let lab = '';
+      if (kind === 'week') lab = DAYS[L.keyToDate(it.key).getDay()];
+      else if (kind === 'month') { const d = Number(it.key.slice(8)); lab = (d === 1 || d % 5 === 0) ? d : ''; }
+      else lab = 'T' + Number(it.key.slice(5));
+      if (lab !== '') out += `<text x="${(i * bw + bw / 2).toFixed(1)}" y="${H - 4}">${lab}</text>`;
+      if (kind === 'week' && it.value !== 0) out += `<text x="${(i * bw + bw / 2).toFixed(1)}" y="${(it.value >= 0 ? y - 3 : y + h + 9).toFixed(1)}">${fmtShort(it.value)}</text>`;
+    });
+    return out + '</svg>';
+  }
+
+  function viewOverview() {
+    const r = L.rangeFor(S, period.kind, period.off);
+    const m = L.summarize(S, r.from, r.to);
+    const ser = L.series(r, m.byDay);
+
+    let html = '';
+    // banner nhắc nhớt / sao lưu
+    const oil = L.oilStatus(S);
+    if (oil.has && oil.remaining <= 300) {
+      html += `<div class="alert ${oil.remaining < 0 ? 'bad' : ''}"><div>🛢️ <b>${oil.remaining < 0 ? 'Quá hạn thay nhớt ' + fmtInt(-oil.remaining) + ' km' : 'Sắp tới hạn thay nhớt (còn ' + fmtInt(oil.remaining) + ' km)'}.</b></div></div>`;
+    } else if (!oil.has) {
+      html += `<div class="alert"><div>🛢️ <b>Chưa có mốc thay nhớt.</b> Khi thay, ghi ở tab Xe để tool nhắc lần sau.</div></div>`;
+    }
+    if ((S.shifts.length + S.expenses.length) > 0) {
+      const last = S.lastBackup ? new Date(S.lastBackup) : null;
+      const days = last ? (Date.now() - last) / 864e5 : Infinity;
+      if (days > 7) html += `<div class="alert bad"><div>💾 <b>${last ? 'Đã ' + Math.floor(days) + ' ngày chưa sao lưu.' : 'Bạn chưa sao lưu lần nào.'}</b> Dữ liệu chỉ nằm trên máy này.</div><button class="btn sm" data-act="export">Sao lưu</button></div>`;
+    }
+
+    html += `<div class="period"><div class="seg">${[['week', 'Tuần'], ['month', 'Tháng'], ['all', 'Tất cả']].map(p =>
+      `<button class="${period.kind === p[0] ? 'on' : ''}" data-act="period" data-k="${p[0]}">${p[1]}</button>`).join('')}</div></div>`;
+    if (period.kind !== 'all') {
+      html += `<div class="nav-period"><button data-act="prev" aria-label="Kỳ trước">‹</button><b>${r.label}</b><button data-act="next" aria-label="Kỳ sau" ${period.off >= 0 ? 'disabled' : ''}>›</button></div>`;
+    }
+
+    if (!m.nShifts && !m.nExpenses) {
+      return html + `<div class="empty">Chưa có dữ liệu trong khoảng này.<br>Ghi ca chạy ở tab "Ca chạy" và các khoản chi ở tab "Chi".</div>`;
+    }
+
+    const tileMoney = n => (Math.abs(n) >= 1e7 ? fmtShort(n) + 'đ' : fmtMoney(n));
+    html += `<div class="tiles">
+      <div class="tile in"><div class="k">TỔNG THU</div><div class="v">${tileMoney(m.income)}</div></div>
+      <div class="tile out"><div class="k">TỔNG CHI</div><div class="v">${tileMoney(m.totalSpend)}</div></div>
+      <div class="tile"><div class="k">CÒN LẠI</div><div class="v ${sgn(m.remain)}">${(m.remain > 0 ? '+' : '') + tileMoney(m.remain)}</div></div></div>`;
+
+    // Tầng 1
+    const segs = [['Xăng', m.fuel, '#e0a030'], ['Hao mòn xe', m.wear, '#8e7cc3'], ['Chi chạy xe khác', m.rideExp, '#4a90d9'], ['Lợi nhuận', Math.max(0, m.profit), '#0b8f5a']];
+    const tot = segs.reduce((a, s) => a + s[1], 0) || 1;
+    const catLines = (obj) => Object.keys(obj).sort((a, b) => obj[b] - obj[a]).map(k => `<div class="ln sub"><span>${esc(k)}</span><span>${fmtMoney(obj[k])}</span></div>`).join('');
+    html += `<section class="card flow"><div class="eyebrow">Chạy xe có lời không?</div>
+      <div class="stack" style="margin-top:10px">${segs.map(s => `<i style="width:${(s[1] / tot * 100).toFixed(1)}%;background:${s[2]}"></i>`).join('')}</div>
+      <div class="legend">${segs.map(s => `<span style="--c:${s[2]}">${s[0]}</span>`).join('')}</div>
+      <div class="ln"><span>Tổng thu <span class="muted small">(thu ròng app${m.bonus ? ' + thưởng/tip' : ''})</span></span><b>${fmtMoney(m.income)}</b></div>
+      <div class="ln"><span>− Xăng <span class="muted small">(ước theo km)</span></span><span>${fmtMoney(m.fuel)}</span></div>
+      <div class="ln"><span>− Hao mòn xe <span class="muted small">(ước theo km)</span></span><span>${fmtMoney(m.wear)}</span></div>
+      <div class="ln"><span>− Chi phí chạy xe khác</span><span>${fmtMoney(m.rideExp)}</span></div>
+      ${catLines(m.rideCats)}
+      <div class="ln sum"><span>Lợi nhuận chạy xe</span><span class="${sgn(m.profit)}">${fmtSigned(m.profit)}</span></div></section>`;
+
+    // Tầng 2
+    html += `<section class="card flow"><div class="eyebrow">Tiền Grab đi đâu?</div>
+      <div class="ln" style="margin-top:6px"><span>Lợi nhuận chạy xe</span><b>${fmtSigned(m.profit)}</b></div>
+      <div class="ln"><span>− Chi tiêu cá nhân</span><span>${fmtMoney(m.personal)}</span></div>
+      ${catLines(m.personalCats)}
+      <div class="ln"><span>− Để dành</span><span>${fmtMoney(m.saving)}</span></div>
+      ${catLines(m.savingCats)}
+      <div class="ln sum"><span>Còn lại chưa phân bổ</span><span class="${sgn(m.remain)}">${fmtSigned(m.remain)}</span></div></section>`;
+
+    html += `<section class="card"><div class="eyebrow" style="margin-bottom:10px">Hiệu quả</div><div class="metrics">
+      <div class="metric"><div class="k">Lãi / km</div><div class="v">${fmtMoney(m.perKm)}</div></div>
+      <div class="metric"><div class="k">Lãi / giờ</div><div class="v">${fmtMoney(m.perHour)}</div></div>
+      <div class="metric"><div class="k">Km chạy Grab</div><div class="v">${fmtInt(m.km)} km</div></div>
+      <div class="metric"><div class="k">Thời gian chạy</div><div class="v">${fmtDur(m.hours)}</div></div>
+      <div class="metric"><div class="k">Số ca</div><div class="v">${m.nShifts}</div></div>
+      <div class="metric"><div class="k">Số chuyến</div><div class="v">${m.trips || '—'}</div></div></div></section>`;
+
+    html += `<section class="card"><div class="eyebrow" style="margin-bottom:8px">Lợi nhuận theo ${period.kind === 'all' ? 'tháng' : 'ngày'}</div>${chartSVG(ser, period.kind)}</section>`;
+    return html;
+  }
+
+  // ---------------------------------------------------------------- màn hình: CÀI ĐẶT
+  function viewSettings() {
+    const st = S.settings;
+    const last = S.lastBackup ? new Date(S.lastBackup).toLocaleString('vi-VN') : 'chưa có';
+    const nField = (key, label, v, suf, cls, hint) => `<div class="fld"><label>${label}</label><div class="inwrap noK"><input class="${cls}" data-setting="${key}" inputmode="${cls === 'dec' ? 'decimal' : 'numeric'}" value="${cls === 'dec' ? String(v).replace('.', ',') : fmtInt(v)}"><span class="suf">${suf}</span></div>${hint ? `<div class="hint">${hint}</div>` : ''}</div>`;
+    return `<section class="card"><h2>Thông số xe</h2>
+        ${nField('baseOdo', 'Odo ban đầu', st.baseOdo, 'km', 'int', 'Mốc khởi đầu, nhập odo hiện tại của xe nếu chưa có. Các lần nhập odo sau sẽ thay thế.')}
+        ${nField('fuelPrice', 'Giá xăng hiện tại', st.fuelPrice, 'đ/lít', 'int')}
+        ${nField('fuelL100', 'Mức tiêu hao ước tính', st.fuelL100, 'lít/100km', 'dec', 'Chỉ dùng tới khi tool học được số thật từ các lần đổ xăng.')}
+        ${nField('wearPerKm', 'Hao mòn xe', st.wearPerKm, 'đ/km', 'int', 'Nhớt + lốp + phanh + sên nhông... Mặc định 240đ/km, chỉnh theo thực tế (giá nhớt, lốp... ở tiệm của bạn).')}
+        ${nField('oilInterval', 'Chu kỳ thay nhớt', st.oilInterval, 'km', 'int')}
+      </section>
+      <section class="card"><h2>Sao lưu dữ liệu</h2>
+        <p class="muted small" style="margin:0 0 10px">Dữ liệu chỉ lưu trên điện thoại này. Hãy sao lưu thường xuyên (lưu file vào Files/iCloud). Lần cuối: <b>${last}</b>.</p>
+        <div class="btn-row"><button class="btn" data-act="export">⬆︎ Xuất file</button><button class="btn" data-act="import">⬇︎ Nhập file</button></div>
+        <button class="link danger" data-act="wipe">Xoá toàn bộ dữ liệu</button></section>
+      <section class="card"><h2>Cách tính</h2><div class="muted small" style="line-height:1.55">
+        <b>Lãi ca</b> = thu ròng app + thưởng/tip − km × (xăng/km + hao mòn/km).<br>
+        <b>Lợi nhuận chạy xe</b> = tổng lãi các ca − chi phí chạy xe khác.<br>
+        <b>Còn lại</b> = lợi nhuận − chi tiêu cá nhân − để dành.<br>
+        Hóa đơn xăng và bảo dưỡng không cộng thẳng vào chi phí (đã tính theo km) — chỉ dùng để tool học đơn giá chính xác.</div></section>`;
+  }
+
+  // ---------------------------------------------------------------- dựng màn hình
+  function render(scrollTop) {
+    $('#view').innerHTML = ({ overview: viewOverview, shift: viewShift, spend: viewSpend, car: viewCar, settings: viewSettings })[tab]();
+    $('#title').textContent = TITLES[tab];
+    document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+    if (scrollTop) window.scrollTo(0, 0);
+  }
+
+  // ---------------------------------------------------------------- hành động
+  const A = {};
+
+  A.tab = el => { tab = el.dataset.tab; render(true); };
+  A['close-sheet'] = () => closeSheet();
+  A.zeros = el => { const i = $('#' + el.dataset.t); if (!i) return; const d = i.value.replace(/\D/g, '') || '0'; i.value = L.fmtInt(Number(d + '000')); i.focus(); };
+
+  // Ca
+  A['start-shift'] = () => {
+    const odo = getInt('startOdo');
+    if (isNaN(odo) || odo <= 0) { toast('Nhập số odo hiện tại'); const i = $('#startOdo'); if (i) i.focus(); return; }
+    const cur = L.lastKnownOdo(S);
+    if (odo < cur && !confirm(`Odo bạn nhập (${fmtInt(odo)}) nhỏ hơn số đã ghi gần nhất (${fmtInt(cur)}). Vẫn bắt đầu ca?`)) return;
+    S.active = { start: new Date().toISOString(), odoStart: odo };
+    save(); render(); toast('Đã bắt đầu ca. Chúc chạy thuận lợi!');
+  };
+  A['cancel-shift'] = () => { if (confirm('Huỷ ca đang chạy? Ca này sẽ không được lưu.')) { S.active = null; save(); render(); } };
+  A['end-shift'] = () => shiftSheet('end');
+  A['manual-shift'] = () => shiftSheet('manual');
+  A['edit-shift'] = el => { const sh = S.shifts.find(x => x.id === el.dataset.id); if (sh) shiftSheet('edit', sh); };
+  A['del-shift'] = el => { if (confirm('Xoá ca này?')) { S.shifts = S.shifts.filter(x => x.id !== el.dataset.id); save(); closeSheet(); render(); toast('Đã xoá ca'); } };
+  A['save-shift'] = el => {
+    const mode = el.dataset.mode;
+    const oS = getInt('f-oS'), oE = getInt('f-oE'), net = getInt('f-net');
+    const bonus = getInt('f-bonus') || 0, trips = getInt('f-trips') || 0;
+    const start = fromLocalInput(val('f-start')) || (S.active && S.active.start);
+    const end = fromLocalInput(val('f-end'));
+    if (isNaN(oS) || oS <= 0) return setErr('Nhập odo đầu ca.');
+    if (isNaN(oE) || oE <= 0) return setErr('Nhập odo cuối ca.');
+    if (oE <= oS) return setErr('Odo cuối phải lớn hơn odo đầu.');
+    if (isNaN(net)) return setErr('Nhập thu nhập ròng trên app (nhập 0 nếu chưa có chuyến nào).');
+    if (!start || !end || new Date(end) < new Date(start)) return setErr('Giờ kết thúc phải sau giờ bắt đầu.');
+    if (oE - oS > 400 && !confirm(`Ca này chạy ${fmtInt(oE - oS)} km. Đúng không?`)) return;
+    if (new Date(end) - new Date(start) > 16 * 3600e3 && !confirm('Ca này dài hơn 16 giờ. Đúng không?')) return;
+    if (mode === 'edit') {
+      const sh = S.shifts.find(x => x.id === el.dataset.id);
+      Object.assign(sh, { start, end, odoStart: oS, odoEnd: oE, net, bonus, trips });
+      save(); closeSheet(); render(); toast('Đã lưu');
+    } else {
+      const sh = { id: uid(), start, end, odoStart: oS, odoEnd: oE, net, bonus, trips, fuelRate: L.fuelRate(S).rate, wearRate: Number(S.settings.wearPerKm) || 0 };
+      S.shifts.push(sh);
+      if (mode === 'end') S.active = null;
+      save(); closeSheet(); render(); showShiftResult(sh);
+    }
+  };
+
+  // Chi
+  A['add-expense'] = () => expenseSheet(null);
+  A['edit-expense'] = el => { const e = S.expenses.find(x => x.id === el.dataset.id); if (e) expenseSheet(e); };
+  A['exp-type'] = el => {
+    expType = el.dataset.t;
+    $('#seg').className = 'seg t-' + expType;
+    $('#seg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.t === expType));
+    const first = catsFor(expType)[0];
+    $('#f-cat').value = first; $('#chips').innerHTML = chipsHtml(expType, first);
+    $('#type-hint').textContent = typeHint(expType);
+  };
+  A['pick-cat'] = el => {
+    $('#f-cat').value = el.dataset.c; $('#f-cat2').value = '';
+    $('#chips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === el));
+  };
+  A['save-expense'] = el => {
+    const amt = getInt('f-amt');
+    if (isNaN(amt) || amt <= 0) return setErr('Nhập số tiền.');
+    const cat = val('f-cat2') || val('f-cat') || L.TYPE_LABEL[expType];
+    const date = val('f-date') || L.todayKey();
+    const data = { amount: amt, type: expType, category: cat, note: val('f-note'), date };
+    if (el.dataset.id) Object.assign(S.expenses.find(x => x.id === el.dataset.id), data);
+    else S.expenses.push(Object.assign({ id: uid() }, data));
+    save(); closeSheet(); render(); toast('Đã lưu khoản chi');
+  };
+  A['del-expense'] = el => { if (confirm('Xoá khoản chi này?')) { S.expenses = S.expenses.filter(x => x.id !== el.dataset.id); save(); closeSheet(); render(); } };
+
+  // Xe
+  A['add-odo'] = () => odoSheet();
+  A['save-odo'] = () => {
+    const odo = getInt('f-odo');
+    if (isNaN(odo) || odo <= 0) return setErr('Nhập số odo.');
+    const cur = L.lastKnownOdo(S);
+    if (odo < cur && !confirm(`Odo (${fmtInt(odo)}) nhỏ hơn số đã ghi gần nhất (${fmtInt(cur)}). Vẫn lưu?`)) return;
+    S.odoLog.push({ id: uid(), date: val('f-date') || L.todayKey(), odo });
+    save(); closeSheet(); render(); toast('Đã cập nhật odo');
+  };
+  A['add-fill'] = () => fillSheet(null);
+  A['edit-fill'] = el => { const f = S.fills.find(x => x.id === el.dataset.id); if (f) fillSheet(f); };
+  A['save-fill'] = el => {
+    const amount = getInt('f-amt'), odo = getInt('f-odo'), liters = getDec('f-liters');
+    if (isNaN(amount) || amount <= 0) return setErr('Nhập số tiền đổ xăng.');
+    if (isNaN(odo) || odo <= 0) return setErr('Nhập odo lúc đổ xăng.');
+    const data = { amount, odo, liters: isNaN(liters) ? null : liters, full: $('#f-full').checked, date: val('f-date') || L.todayKey() };
+    if (el.dataset.id) Object.assign(S.fills.find(x => x.id === el.dataset.id), data);
+    else S.fills.push(Object.assign({ id: uid() }, data));
+    save(); closeSheet(); render(); toast('Đã lưu lần đổ xăng');
+  };
+  A['del-fill'] = el => { if (confirm('Xoá lần đổ xăng này?')) { S.fills = S.fills.filter(x => x.id !== el.dataset.id); save(); closeSheet(); render(); } };
+  A['add-maint'] = el => maintSheet(null, el.dataset.item);
+  A['edit-maint'] = el => { const m = S.maint.find(x => x.id === el.dataset.id); if (m) maintSheet(m); };
+  A['pick-item'] = el => {
+    $('#f-item').value = el.dataset.c;
+    $('#chips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === el));
+  };
+  A['save-maint'] = el => {
+    const cost = getInt('f-amt'), odo = getInt('f-odo');
+    if (isNaN(cost) || cost < 0) return setErr('Nhập chi phí.');
+    if (isNaN(odo) || odo <= 0) return setErr('Nhập odo lúc làm.');
+    const data = { item: val('f-item') || 'Khác', cost, odo, note: val('f-note'), date: val('f-date') || L.todayKey() };
+    if (el.dataset.id) Object.assign(S.maint.find(x => x.id === el.dataset.id), data);
+    else S.maint.push(Object.assign({ id: uid() }, data));
+    save(); closeSheet(); render(); toast('Đã lưu bảo dưỡng');
+  };
+  A['del-maint'] = el => { if (confirm('Xoá mục bảo dưỡng này?')) { S.maint = S.maint.filter(x => x.id !== el.dataset.id); save(); closeSheet(); render(); } };
+
+  // Tổng quan
+  A.period = el => { period = { kind: el.dataset.k, off: 0 }; render(); };
+  A.prev = () => { period.off--; render(); };
+  A.next = () => { if (period.off < 0) { period.off++; render(); } };
+
+  // Sao lưu
+  A.export = async () => {
+    const name = `grab-thuchi-${L.todayKey()}.json`;
+    S.lastBackup = new Date().toISOString(); save();
+    const blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
+    try {
+      const file = new File([blob], name, { type: 'application/json' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); render(); return; }
+    } catch (e) { if (e && e.name === 'AbortError') { render(); return; } }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    render(); toast('Đã xuất file sao lưu');
+  };
+  A.import = () => $('#importFile').click();
+  A.wipe = () => {
+    if (!confirm('Xoá TOÀN BỘ dữ liệu trên máy này? Không thể hoàn tác (hãy sao lưu trước).')) return;
+    if (!confirm('Chắc chắn xoá hết?')) return;
+    S = L.emptyState(); save(); render(true); toast('Đã xoá dữ liệu');
+  };
+
+  // ---------------------------------------------------------------- sự kiện
+  document.addEventListener('click', e => {
+    const el = e.target.closest('[data-act]');
+    if (!el) return;
+    const fn = A[el.dataset.act];
+    if (fn) { e.preventDefault(); fn(el, e); }
+  });
+
+  // Định dạng số có dấu chấm khi gõ
+  document.addEventListener('input', e => {
+    const t = e.target;
+    if (t.matches && t.matches('input.money, input.int')) {
+      const d = t.value.replace(/\D/g, '');
+      t.value = d ? L.fmtInt(Number(d)) : '';
+    }
+  });
+
+  // Cài đặt: lưu khi đổi
+  document.addEventListener('change', e => {
+    const t = e.target;
+    if (t.dataset && t.dataset.setting) {
+      const key = t.dataset.setting;
+      const v = key === 'fuelL100' ? parseFloat(t.value.replace(',', '.')) : Number(t.value.replace(/\D/g, ''));
+      if (!isFinite(v) || v <= 0) { toast('Giá trị không hợp lệ'); render(); return; }
+      S.settings[key] = v; save(); toast('Đã lưu cài đặt');
+    }
+  });
+
+  $('#importFile').addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      try {
+        const o = JSON.parse(rd.result);
+        if (!o || typeof o !== 'object' || !o.settings || !Array.isArray(o.shifts)) throw new Error('bad');
+        if (!confirm(`Nhập file này sẽ THAY THẾ dữ liệu hiện tại.\nFile có ${o.shifts.length} ca, ${(o.expenses || []).length} khoản chi. Tiếp tục?`)) return;
+        S = L.migrate(o); save(); render(true); toast('Đã nhập dữ liệu');
+      } catch (err) { toast('File không đúng định dạng'); }
+    };
+    rd.readAsText(f);
+  });
+
+  setInterval(() => { const t = $('#timer'); if (t && S.active) t.textContent = elapsed(S.active.start); }, 20000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && tab === 'shift' && !$('#sheet-root')) render(); });
+
+  // ---------------------------------------------------------------- khởi động
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    navigator.serviceWorker.register('sw.js').catch(() => { });
+  }
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
+  render(true);
+
+  window.__app = { get S() { return S; }, render, A };
+})();
