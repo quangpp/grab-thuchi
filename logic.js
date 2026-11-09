@@ -80,7 +80,9 @@
     const hours = Math.max(0, (new Date(sh.end) - new Date(sh.start)) / 3600000);
     const fr = sh.fuelRate != null ? sh.fuelRate : (curFuelRate != null ? curFuelRate : fuelRate(s).rate);
     const wr = sh.wearRate != null ? sh.wearRate : (Number(s.settings.wearPerKm) || 0);
-    const net = sh.net || 0, bonus = sh.bonus || 0;
+    // Tip/thưởng = số nhập lúc kết thúc ca + các khoản thêm sau (tip qua app, thưởng về sau 24h...)
+    const extras = (sh.extras || []).reduce((a, e) => a + (e.amount || 0), 0);
+    const net = sh.net || 0, bonus = (sh.bonus || 0) + extras;
     const income = net + bonus;
     const fuel = km * fr, wear = km * wr;
     const profit = income - fuel - wear;

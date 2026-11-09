@@ -115,11 +115,13 @@
         const c = L.shiftCalc(sh, S);
         const d = new Date(sh.start);
         return `<button class="row" data-act="edit-shift" data-id="${sh.id}">
-          <div class="l"><b>${dayLabel(d)}</b><span class="muted">${fmtTime(sh.start)}–${fmtTime(sh.end)} · ${fmtDur(c.hours)} · ${fmtInt(c.km)} km${sh.trips ? ' · ' + sh.trips + ' chuyến' : ''}</span></div>
+          <div class="l"><b>${dayLabel(d)}</b><span class="muted">${fmtTime(sh.start)}–${fmtTime(sh.end)} · ${fmtDur(c.hours)} · ${fmtInt(c.km)} km${sh.trips ? ' · ' + sh.trips + ' chuyến' : ''}</span>${c.bonus ? `<span class="muted">gồm tip/thưởng ${fmtMoney(c.bonus)}</span>` : ''}</div>
           <div class="amt ${sgn(c.profit)}">${fmtSigned(c.profit)}<span class="muted small" style="display:block;font-weight:500">thu ${fmtMoney(c.income)}</span></div></button>`;
       }).join('')}</section>`
       : `<div class="empty">Chưa có ca nào.<br>Bấm "Bắt đầu ca" trước khi chạy, và "Kết thúc ca" khi xong.</div>`;
-    return top + today + list;
+    const extraBtn = S.shifts.length
+      ? `<button class="btn" data-act="add-extra" style="margin:0 0 14px">＋ Thêm tip / thưởng cho một ca đã chạy</button>` : '';
+    return top + extraBtn + today + list;
   }
 
   // ---- Sheet: kết thúc / thêm / sửa ca
@@ -131,20 +133,50 @@
     else { end = now.toISOString(); start = new Date(now - 2 * 3600e3).toISOString(); }
     const title = mode === 'end' ? 'Kết thúc ca' : mode === 'edit' ? 'Sửa ca' : 'Thêm ca đã chạy';
     const ctx = mode === 'end' ? `Odo đầu ca: <b>${fmtInt(oS)} km</b>` : '';
-    const timeBlock = `<div class="grid2">
+    const timeBlock = `<div>
         <div class="fld"><label for="f-start">Bắt đầu</label><input id="f-start" type="datetime-local" value="${toLocalInput(start)}"></div>
         <div class="fld"><label for="f-end">Kết thúc</label><input id="f-end" type="datetime-local" value="${toLocalInput(end)}"></div></div>`;
+    const extrasBlock = mode === 'edit'
+      ? `<div class="group-h" style="padding-left:0">Tip / thưởng thêm sau</div>
+         ${(sh.extras || []).map(x => `<div class="kv"><span>${XTYPE[x.type] || 'Khác'} · thêm ${fmtDM(x.at)}</span><span><b>${fmtMoney(x.amount)}</b> <button type="button" class="chip" data-act="del-extra" data-shift="${sh.id}" data-id="${x.id}">Xoá</button></span></div>`).join('') || '<div class="hint" style="margin:0 0 6px">Chưa có.</div>'}
+         <button type="button" class="btn sm" data-act="add-extra" data-shift="${sh.id}" style="margin:6px 0 12px">＋ Thêm tip / thưởng</button>` : '';
     const body = `${ctx ? `<p class="muted" style="margin:0 0 10px">${ctx}</p>` : ''}
       ${mode === 'end' ? '' : intField('f-oS', 'Odo đầu ca', oS, { suf: 'km' })}
       ${intField('f-oE', 'Odo cuối ca', oE, { suf: 'km', focus: mode !== 'edit', ph: mode === 'end' ? '' : '' })}
       ${moneyField('f-net', 'Thu nhập ròng trên app Grab', net, { hint: 'Số app đã trừ phí sàn.' })}
-      ${moneyField('f-bonus', 'Thưởng / tip (nếu chưa nằm trong số trên)', bonus)}
+      ${moneyField('f-bonus', 'Tip tiền mặt / thưởng đã biết (nếu có)', bonus, { hint: 'Tip qua app hoặc thưởng về sau thì thêm sau bằng nút "Thêm tip / thưởng cho một ca đã chạy".' })}
       ${intField('f-trips', 'Số chuyến (tuỳ chọn)', trips, { suf: 'chuyến' })}
       ${mode === 'end' ? `<details><summary>Sửa giờ hoặc odo đầu ca</summary>${timeBlock}${intField('f-oS', 'Odo đầu ca', oS, { suf: 'km' })}</details>` : timeBlock}
+      ${extrasBlock}
       <div class="err" id="err"></div>
       <button class="btn primary lg" data-act="save-shift" data-mode="${mode}" data-id="${sh ? sh.id : ''}">${mode === 'edit' ? 'Lưu thay đổi' : 'Lưu ca'}</button>
       ${mode === 'edit' ? `<button class="link danger" data-act="del-shift" data-id="${sh.id}">Xoá ca này</button>` : ''}`;
     openSheet(title, body);
+  }
+
+  // ---- Sheet: thêm tip / thưởng đến sau cho một ca (cộng vào đúng ngày chạy của ca đó)
+  const XTYPE = { tipcash: 'Tip tiền mặt', tipapp: 'Tip qua app', bonus: 'Thưởng' };
+  const fmtDM = iso => { const d = new Date(iso); return pad(d.getDate()) + '/' + pad(d.getMonth() + 1); };
+  const shiftChipLabel = sh => { const d = new Date(sh.start); return dayLabel(d) + ' · ' + fmtTime(sh.start); };
+
+  function extraSheet(shiftId) {
+    let list = sortedDesc(S.shifts, x => x.start).slice(0, 7);
+    if (!list.length) { toast('Chưa có ca nào để thêm tip/thưởng'); return; }
+    if (shiftId && !list.some(x => x.id === shiftId)) {
+      const s = S.shifts.find(x => x.id === shiftId); if (s) list = [s].concat(list);
+    }
+    const sel = shiftId || list[0].id;
+    openSheet('Thêm tip / thưởng cho ca', `
+      <label class="l">Cho ca nào? <span class="muted small">(tiền được tính vào đúng ngày chạy ca đó)</span></label>
+      <div class="chips" id="xshifts">${list.map(s => `<button type="button" class="chip ${s.id === sel ? 'on' : ''}" data-act="pick-xshift" data-id="${s.id}">${shiftChipLabel(s)}</button>`).join('')}</div>
+      <input type="hidden" id="f-xshift" value="${sel}">
+      <label class="l">Loại</label>
+      <div class="chips" id="xtypes">${Object.keys(XTYPE).map((k, i) => `<button type="button" class="chip ${i === 1 ? 'on' : ''}" data-act="pick-xtype" data-k="${k}">${XTYPE[k]}</button>`).join('')}</div>
+      <input type="hidden" id="f-xtype" value="tipapp">
+      ${moneyField('f-amt', 'Số tiền', '', { focus: true })}
+      <div class="hint" style="margin:-6px 0 10px">Chỉ nhập khoản chưa có trong "thu nhập ròng" bạn đã ghi cho ca đó, để không bị cộng trùng.</div>
+      <div class="err" id="err"></div>
+      <button class="btn primary lg" data-act="save-extra">Cộng vào ca</button>`);
   }
 
   function showShiftResult(sh) {
@@ -478,6 +510,31 @@
       if (mode === 'end') S.active = null;
       save(); closeSheet(); render(); showShiftResult(sh);
     }
+  };
+
+  // Tip / thưởng thêm sau cho ca
+  A['add-extra'] = el => extraSheet(el.dataset.shift);
+  A['pick-xshift'] = el => {
+    $('#f-xshift').value = el.dataset.id;
+    $('#xshifts').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === el));
+  };
+  A['pick-xtype'] = el => {
+    $('#f-xtype').value = el.dataset.k;
+    $('#xtypes').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === el));
+  };
+  A['save-extra'] = () => {
+    const amount = getInt('f-amt');
+    if (isNaN(amount) || amount <= 0) return setErr('Nhập số tiền.');
+    const sh = S.shifts.find(x => x.id === val('f-xshift'));
+    if (!sh) return setErr('Chọn ca.');
+    (sh.extras = sh.extras || []).push({ id: uid(), type: val('f-xtype') || 'tipapp', amount, at: new Date().toISOString() });
+    save(); closeSheet(); render();
+    toast(`Đã cộng ${fmtMoney(amount)} vào ca ${shiftChipLabel(sh)}`);
+  };
+  A['del-extra'] = el => {
+    const sh = S.shifts.find(x => x.id === el.dataset.shift); if (!sh) return;
+    sh.extras = (sh.extras || []).filter(x => x.id !== el.dataset.id);
+    save(); render(); shiftSheet('edit', sh);
   };
 
   // Chi

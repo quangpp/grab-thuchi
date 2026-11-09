@@ -76,6 +76,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .inwrap .k { appearance: none; border: 1.5px solid var(--line); background: var(--card); color: var(--accent-d); font: inherit; font-weight: 700; border-radius: 12px; min-height: 48px; padding: 0 12px; cursor: pointer; }
 .inwrap.noK input { padding-right: 44px; }
 .hint { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+input[type="date"], input[type="datetime-local"] { min-width: 0; -webkit-appearance: none; appearance: none; text-align: left; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
 .chip {
