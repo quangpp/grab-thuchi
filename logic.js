@@ -63,14 +63,21 @@
   function fuelRate(s) {
     const st = s.settings;
     const def = (Number(st.fuelL100) || 0) / 100 * (Number(st.fuelPrice) || 0);
+    // Mốc đo: các lần đổ ĐẦY BÌNH có odo. Xăng tiêu thụ giữa mốc đầu và mốc cuối = mọi lần đổ nằm trong khoảng đó
+    // (kể cả lần đổ chưa đầy hoặc không nhớ odo, những lần này xếp theo ngày).
     const full = s.fills
       .filter(f => f.full !== false && f.odo > 0 && f.amount > 0)
       .sort((a, b) => a.odo - b.odo);
     if (full.length >= 2) {
       const w = full.slice(-6); // tối đa 5 khoảng gần nhất
-      const dist = w[w.length - 1].odo - w[0].odo;
+      const first = w[0], last = w[w.length - 1];
+      const dist = last.odo - first.odo;
       if (dist >= 100) {
-        const amt = w.slice(1).reduce((a, f) => a + f.amount, 0);
+        const amt = s.fills.reduce((a, f) => {
+          if (!(f.amount > 0)) return a;
+          const inside = f.odo > 0 ? (f.odo > first.odo && f.odo <= last.odo) : (f.date > first.date && f.date <= last.date);
+          return inside ? a + f.amount : a;
+        }, 0);
         return { rate: amt / dist, source: 'learned', n: w.length - 1, dist, def };
       }
     }
@@ -260,6 +267,13 @@
     const sign = n < 0 ? '-' : '';
     return sign + String(Math.abs(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   }
+  // Km có thể lẻ: 43 → "43", 43.2 → "43,2"
+  function fmtKm(n) {
+    n = Math.round((Number(n) || 0) * 10) / 10;
+    if (Number.isInteger(n)) return fmtInt(n);
+    const sign = n < 0 ? '-' : '', a = Math.abs(n);
+    return sign + fmtInt(Math.trunc(a)) + ',' + Math.round((a - Math.trunc(a)) * 10);
+  }
   function fmtMoney(n) { return fmtInt(n) + 'đ'; }
   function fmtSigned(n) {
     const r = Math.round(n);
@@ -296,7 +310,7 @@
     lastKnownOdo, fuelRate, shiftCalc,
     dayRange, weekRange, monthRange, allRange, rangeFor, summarize, series,
     oilStatus, wearSuggestion, lastDayOfPrevMonth, cashPosition,
-    fmtInt, fmtMoney, fmtSigned, fmtShort, fmtDur, parseMoney,
+    fmtInt, fmtKm, fmtMoney, fmtSigned, fmtShort, fmtDur, parseMoney,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Logic = api;

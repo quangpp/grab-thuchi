@@ -29,6 +29,7 @@
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const pad = n => String(n).padStart(2, '0');
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmtKm = L.fmtKm;
   const fmtInt = L.fmtInt, fmtMoney = L.fmtMoney, fmtSigned = L.fmtSigned, fmtShort = L.fmtShort, fmtDur = L.fmtDur;
   const fmtTime = iso => { const d = new Date(iso); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
   const dayLabel = d => DAYS[d.getDay()] + ' ' + pad(d.getDate()) + '/' + pad(d.getMonth() + 1);
@@ -55,6 +56,11 @@
   const intField = (id, label, v, opt) => {
     opt = opt || {};
     return `<div class="fld"><label for="${id}">${label}</label><div class="inwrap noK"><input id="${id}" class="int" inputmode="numeric" autocomplete="off" placeholder="${opt.ph || ''}" value="${v != null && v !== '' ? fmtInt(v) : ''}" ${opt.focus ? 'data-focus' : ''}><span class="suf">${opt.suf || ''}</span></div>${opt.hint ? `<div class="hint">${opt.hint}</div>` : ''}</div>`;
+  };
+  // Ô số thập phân (ví dụ 43,2 km): không tự thêm dấu chấm ngăn cách
+  const decField = (id, label, v, opt) => {
+    opt = opt || {};
+    return `<div class="fld"><label for="${id}">${label}</label><div class="inwrap noK"><input id="${id}" inputmode="decimal" autocomplete="off" placeholder="${opt.ph || ''}" value="${v != null && v !== '' ? String(v).replace('.', ',') : ''}" ${opt.focus ? 'data-focus' : ''}><span class="suf">${opt.suf || ''}</span></div>${opt.hint ? `<div class="hint">${opt.hint}</div>` : ''}</div>`;
   };
   const textField = (id, label, v, ph) => `<div class="fld"><label for="${id}">${label}</label><input id="${id}" type="text" autocomplete="off" placeholder="${esc(ph || '')}" value="${esc(v || '')}"></div>`;
   const dateField = (id, label, v) => `<div class="fld"><label for="${id}">${label}</label><input id="${id}" type="date" value="${v}"></div>`;
@@ -85,7 +91,7 @@
     const c = L.shiftCalc(sh, S);
     const d = new Date(sh.start);
     return `<button class="row" data-act="edit-shift" data-id="${sh.id}">
-      <div class="l"><b>${dayLabel(d)}</b><span class="muted">${sh.noClock ? (c.hours > 0 ? fmtDur(c.hours) : 'không rõ giờ') : fmtTime(sh.start) + '–' + fmtTime(sh.end) + ' · ' + fmtDur(c.hours)} · ${fmtInt(c.km)} km${sh.trips ? ' · ' + sh.trips + ' chuyến' : ''}</span>${c.bonus ? `<span class="muted">gồm tip/thưởng ${fmtMoney(c.bonus)}</span>` : ''}</div>
+      <div class="l"><b>${dayLabel(d)}</b><span class="muted">${sh.noClock ? (c.hours > 0 ? fmtDur(c.hours) : 'không rõ giờ') : fmtTime(sh.start) + '–' + fmtTime(sh.end) + ' · ' + fmtDur(c.hours)} · ${fmtKm(c.km)} km${sh.trips ? ' · ' + sh.trips + ' chuyến' : ''}</span>${c.bonus ? `<span class="muted">gồm tip/thưởng ${fmtMoney(c.bonus)}</span>` : ''}</div>
       <div class="amt ${sgn(c.profit)}">${fmtSigned(c.profit)}<span class="muted small" style="display:block;font-weight:500">thu ${fmtMoney(c.income)}</span></div></button>`;
   }
 
@@ -113,7 +119,7 @@
           <div class="metrics" style="margin-top:8px">
             <div class="metric"><div class="k">Tổng thu</div><div class="v">${fmtMoney(td.income)}</div></div>
             <div class="metric"><div class="k">Lãi ca chạy</div><div class="v ${sgn(td.profit)}">${fmtSigned(td.profit)}</div></div>
-            <div class="metric"><div class="k">Km / giờ</div><div class="v">${fmtInt(td.km)} km · ${fmtDur(td.hours)}</div></div>
+            <div class="metric"><div class="k">Km / giờ</div><div class="v">${fmtKm(td.km)} km ·${fmtDur(td.hours)}</div></div>
             <div class="metric"><div class="k">Lãi / giờ</div><div class="v">${fmtMoney(td.perHour)}</div></div>
           </div></section>` : '';
 
@@ -176,7 +182,7 @@
       <div class="seg" id="kmseg">
         <button type="button" class="${useOdo ? '' : 'on'}" data-act="km-mode" data-m="km">Chỉ biết số km</button>
         <button type="button" class="${useOdo ? 'on' : ''}" data-act="km-mode" data-m="odo">Có số odo</button></div>
-      <div id="box-km" ${useOdo ? 'hidden' : ''}>${intField('f-km', 'Số km đã chạy Grab', useOdo ? '' : km, { suf: 'km', focus: !edit })}</div>
+      <div id="box-km" ${useOdo ? 'hidden' : ''}>${decField('f-km', 'Số km đã chạy Grab', useOdo ? '' : (km === '' ? '' : Math.round(km * 10) / 10), { suf: 'km', focus: !edit, ph: 'vd 43,2' })}</div>
       <div id="box-odo" ${useOdo ? '' : 'hidden'}>
         ${intField('f-oS', 'Odo đầu ca', edit && useOdo ? sh.odoStart : '', { suf: 'km' })}
         ${intField('f-oE', 'Odo cuối ca', edit && useOdo ? sh.odoEnd : '', { suf: 'km' })}</div>
@@ -221,7 +227,7 @@
       <div class="center" style="margin:6px 0 14px">
         <div class="eyebrow">Lãi ca này</div>
         <div class="big ${sgn(c.profit)}">${fmtSigned(c.profit)}</div>
-        <div class="muted">${fmtInt(c.km)} km · ${fmtDur(c.hours)}</div></div>
+        <div class="muted">${fmtKm(c.km)} km · ${fmtDur(c.hours)}</div></div>
       <div class="flow">
         <div class="ln"><span>Thu (app${c.bonus ? ' + thưởng/tip' : ''})</span><b>${fmtMoney(c.income)}</b></div>
         <div class="ln"><span class="muted">− Xăng (ước theo km)</span><span>${fmtMoney(c.fuel)}</span></div>
@@ -399,14 +405,21 @@
       ${sug ? `<div class="alert ok" style="margin:8px 0 0"><div>Chi bảo dưỡng thật ≈ <b>${fmtInt(sug.perKm)}đ/km</b> (${fmtMoney(sug.cost)} / ${fmtInt(sug.km)} km). Bạn có thể chỉnh trong Cài đặt.</div></div>` : `<div class="hint">Sau vài lần bảo dưỡng (≥ 3.000 km) tool sẽ gợi ý chỉnh lại số này.</div>`}</section>`;
 
     // đổ xăng
-    const fills = S.fills.slice().sort((a, b) => a.odo - b.odo);
-    const withStats = fills.map((f, i) => {
-      const prev = fills.slice(0, i).reverse().find(p => p.full !== false);
-      const km = prev && f.full !== false ? f.odo - prev.odo : null;
-      return { f, km, per: km > 0 ? f.amount / km : null };
-    }).reverse().slice(0, 15);
-    const fillList = withStats.length ? `<section class="card tight"><div class="group-h">Lịch sử đổ xăng</div>${withStats.map(x =>
-      `<button class="row" data-act="edit-fill" data-id="${x.f.id}"><div class="l"><b>${keyLabel(x.f.date)}</b><span class="muted">odo ${fmtInt(x.f.odo)}${x.f.liters ? ' · ' + x.f.liters + ' lít' : ''}${x.f.full === false ? ' · chưa đầy' : ''}${x.km ? ` · ${fmtInt(x.km)} km · ${fmtInt(x.per)}đ/km` : ''}</span></div><div class="amt">${fmtMoney(x.f.amount)}</div></button>`).join('')}</section>` : '';
+    // Đơn giá giữa hai lần đổ đầy liên tiếp (chỉ tính khi cả hai có odo và không có lần đổ thiếu odo ở giữa)
+    const odoFills = S.fills.filter(f => f.odo > 0).sort((a, b) => a.odo - b.odo);
+    const stat = {};
+    odoFills.forEach((f, i) => {
+      const prev = odoFills.slice(0, i).reverse().find(p => p.full !== false);
+      if (!prev || f.full === false) return;
+      const gap = S.fills.some(x => !(x.odo > 0) && x.date > prev.date && x.date <= f.date);
+      const km = f.odo - prev.odo;
+      if (km > 0 && !gap) stat[f.id] = { km, per: f.amount / km };
+    });
+    const shownFills = sortedDesc(S.fills, f => f.date + String(f.odo || 0).padStart(8, '0')).slice(0, 15);
+    const fillList = shownFills.length ? `<section class="card tight"><div class="group-h">Lịch sử đổ xăng</div>${shownFills.map(f => {
+      const st = stat[f.id];
+      return `<button class="row" data-act="edit-fill" data-id="${f.id}"><div class="l"><b>${keyLabel(f.date)}</b><span class="muted">${f.odo > 0 ? 'odo ' + fmtInt(f.odo) : 'chưa có odo'}${f.liters ? ' · ' + String(f.liters).replace('.', ',') + ' lít' : ''}${f.full === false ? ' · chưa đầy' : ''}${st ? ` · ${fmtInt(st.km)} km · ${fmtInt(st.per)}đ/km` : ''}</span></div><div class="amt">${fmtMoney(f.amount)}</div></button>`;
+    }).join('')}</section>` : '';
 
     const maint = sortedDesc(S.maint, m => m.odo).slice(0, 15);
     const maintList = maint.length ? `<section class="card tight"><div class="group-h">Lịch sử bảo dưỡng</div>${maint.map(m =>
@@ -427,7 +440,7 @@
   function fillSheet(f) {
     openSheet(f ? 'Sửa lần đổ xăng' : 'Đổ xăng', `
       ${moneyField('f-amt', 'Số tiền đổ', f ? f.amount : '', { focus: !f })}
-      ${intField('f-odo', 'Odo lúc đổ', f ? f.odo : '', { suf: 'km', ph: fmtInt(L.lastKnownOdo(S)) })}
+      ${intField('f-odo', 'Odo lúc đổ (tuỳ chọn)', f && f.odo > 0 ? f.odo : '', { suf: 'km', ph: fmtInt(L.lastKnownOdo(S)), hint: 'Không nhớ thì để trống: khoản này vẫn tính vào tiền xăng đã đổ (đối soát tiền), chỉ chưa dùng để học đơn giá xăng/km.' })}
       <div class="fld"><label for="f-liters">Số lít (tuỳ chọn)</label><input id="f-liters" inputmode="decimal" class="dec" placeholder="vd 2,8" value="${f && f.liters ? String(f.liters).replace('.', ',') : ''}"></div>
       <label class="check"><input type="checkbox" id="f-full" ${!f || f.full !== false ? 'checked' : ''}> Đã đổ đầy bình</label>
       <div class="hint" style="margin:-6px 0 10px">Đổ đầy bình mỗi lần thì tool tính được đơn giá xăng/km chính xác.</div>
@@ -550,7 +563,7 @@
     html += `<section class="card"><div class="eyebrow" style="margin-bottom:10px">Hiệu quả</div><div class="metrics">
       <div class="metric"><div class="k">Lãi / km</div><div class="v">${fmtMoney(m.perKm)}</div></div>
       <div class="metric"><div class="k">Lãi / giờ</div><div class="v">${fmtMoney(m.perHour)}</div></div>
-      <div class="metric"><div class="k">Km chạy Grab</div><div class="v">${fmtInt(m.km)} km</div></div>
+      <div class="metric"><div class="k">Km chạy Grab</div><div class="v">${fmtKm(m.km)} km</div></div>
       <div class="metric"><div class="k">Thời gian chạy</div><div class="v">${fmtDur(m.hours)}</div></div>
       <div class="metric"><div class="k">Số ca</div><div class="v">${m.nShifts}</div></div>
       <div class="metric"><div class="k">Số chuyến</div><div class="v">${m.trips || '—'}</div></div></div></section>`;
@@ -628,15 +641,16 @@
       if (oE <= oS) return setErr('Odo cuối phải lớn hơn odo đầu.');
       kmv = oE - oS;
     } else {
-      km = getInt('f-km');
-      if (isNaN(km) || km <= 0) return setErr('Nhập số km đã chạy.');
+      km = getDec('f-km');
+      if (isNaN(km) || km <= 0) return setErr('Nhập số km đã chạy (có thể là số lẻ, ví dụ 43,2).');
+      km = Math.round(km * 10) / 10;
       kmv = km;
     }
     const net = getInt('f-net');
     if (isNaN(net)) return setErr('Nhập thu nhập ròng trên app (nhập 0 nếu không có).');
     const hrs = val('f-hours') ? getDec('f-hours') : 0;
     if (isNaN(hrs) || hrs < 0 || hrs > 24) return setErr('Số giờ không hợp lệ (0–24).');
-    if (kmv > 400 && !confirm(`Ca này chạy ${fmtInt(kmv)} km. Đúng không?`)) return;
+    if (kmv > 400 && !confirm(`Ca này chạy ${fmtKm(kmv)} km. Đúng không?`)) return;
     const start = new Date(date + 'T12:00:00');
     const data = {
       start: start.toISOString(), end: new Date(start.getTime() + hrs * 3600e3).toISOString(), noClock: true,
@@ -773,8 +787,7 @@
   A['save-fill'] = el => {
     const amount = getInt('f-amt'), odo = getInt('f-odo'), liters = getDec('f-liters');
     if (isNaN(amount) || amount <= 0) return setErr('Nhập số tiền đổ xăng.');
-    if (isNaN(odo) || odo <= 0) return setErr('Nhập odo lúc đổ xăng.');
-    const data = { amount, odo, liters: isNaN(liters) ? null : liters, full: $('#f-full').checked, date: val('f-date') || L.todayKey() };
+    const data = { amount, odo: isNaN(odo) || odo <= 0 ? null : odo, liters: isNaN(liters) ? null : liters, full: $('#f-full').checked, date: val('f-date') || L.todayKey() };
     if (el.dataset.id) Object.assign(S.fills.find(x => x.id === el.dataset.id), data);
     else S.fills.push(Object.assign({ id: uid() }, data));
     save(); closeSheet(); render(); toast('Đã lưu lần đổ xăng');
