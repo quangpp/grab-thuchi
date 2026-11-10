@@ -515,8 +515,15 @@
 
   function viewOverview() {
     const r = L.rangeFor(S, period.kind, period.off);
-    const m = L.summarize(S, r.from, r.to);
+    // Kỳ "Tất cả" + có vốn ban đầu: vốn là thu nhập/lợi nhuận của giai đoạn trước, nên được cộng vào tổng;
+    // chỉ tính các khoản SAU ngày chốt (trước đó đã nằm trong vốn). Các kỳ Ngày/Tuần/Tháng không cộng vốn.
+    const capAll = period.kind === 'all' && S.capital ? S.capital : null;
+    const capAmt = capAll ? (capAll.total || 0) : 0;
+    let from = r.from;
+    if (capAll) { const d = L.keyToDate(capAll.date); d.setDate(d.getDate() + 1); from = L.dateKey(d); }
+    const m = L.summarize(S, from, r.to);
     const ser = L.series(r, m.byDay);
+    m.income += capAmt; m.profit += capAmt; m.remain += capAmt; // perKm/perHour đã tính riêng từ các ca nên không bị ảnh hưởng
 
     let html = '';
     // banner nhắc nhớt / sao lưu
@@ -539,15 +546,21 @@
       html += `<div class="nav-period"><button data-act="prev" aria-label="Kỳ trước">‹</button><b>${periodLabel(r)}</b><button data-act="next" aria-label="Kỳ sau" ${period.off >= 0 ? 'disabled' : ''}>›</button></div>`;
     }
 
-    if (!m.nShifts && !m.nExpenses) {
+    if (capAll) {
+      const cd = capAll.date.slice(8) + '/' + capAll.date.slice(5, 7);
+      html += `<div class="hint" style="margin:-4px 0 12px">Tính từ sau ngày chốt vốn (${cd}) và đã cộng vốn ban đầu ${fmtMoney(capAmt)} vào tổng thu. Các khoản ghi trước ngày chốt không tính (đã nằm trong vốn).</div>`;
+    }
+
+    if (!m.nShifts && !m.nExpenses && !capAmt) {
       return html + `<div class="empty">Chưa có dữ liệu trong khoảng này.<br>Ghi ca chạy ở tab "Ca chạy" và các khoản chi ở tab "Chi".</div>`;
     }
 
     const tileMoney = n => (Math.abs(n) >= 1e7 ? fmtShort(n) + 'đ' : fmtMoney(n));
+    const tv = (cls, text) => `<div class="v ${cls}" style="font-size:${text.length > 9 ? 14 : 17}px">${text}</div>`; // số dài thì thu nhỏ chữ cho vừa ô
     html += `<div class="tiles">
-      <div class="tile in"><div class="k">TỔNG THU</div><div class="v">${tileMoney(m.income)}</div></div>
-      <div class="tile out"><div class="k">TỔNG CHI</div><div class="v">${tileMoney(m.totalSpend)}</div></div>
-      <div class="tile"><div class="k">CÒN LẠI</div><div class="v ${sgn(m.remain)}">${(m.remain > 0 ? '+' : '') + tileMoney(m.remain)}</div></div></div>`;
+      <div class="tile in"><div class="k">TỔNG THU</div>${tv('', tileMoney(m.income))}</div>
+      <div class="tile out"><div class="k">TỔNG CHI</div>${tv('', tileMoney(m.totalSpend))}</div>
+      <div class="tile"><div class="k">CÒN LẠI</div>${tv(sgn(m.remain), (m.remain > 0 ? '+' : '') + tileMoney(m.remain))}</div></div>`;
 
     // Tầng 1
     const segs = [['Xăng', m.fuel, '#e0a030'], ['Hao mòn xe', m.wear, '#8e7cc3'], ['Chi chạy xe khác', m.rideExp, '#4a90d9'], ['Lợi nhuận', Math.max(0, m.profit), '#0b8f5a']];
@@ -557,6 +570,7 @@
       <div class="stack" style="margin-top:10px">${segs.map(s => `<i style="width:${(s[1] / tot * 100).toFixed(1)}%;background:${s[2]}"></i>`).join('')}</div>
       <div class="legend">${segs.map(s => `<span style="--c:${s[2]}">${s[0]}</span>`).join('')}</div>
       <div class="ln"><span>Tổng thu <span class="muted small">(thu ròng app${m.bonus ? ' + thưởng/tip' : ''})</span></span><b>${fmtMoney(m.income)}</b></div>
+      ${capAmt ? `<div class="ln sub"><span>Thu nhập các ca đã ghi</span><span>${fmtMoney(m.income - capAmt)}</span></div><div class="ln sub"><span>Vốn ban đầu (thu nhập trước ngày chốt)</span><span>${fmtMoney(capAmt)}</span></div>` : ''}
       <div class="ln"><span>− Xăng <span class="muted small">(ước theo km)</span></span><span>${fmtMoney(m.fuel)}</span></div>
       <div class="ln"><span>− Hao mòn xe <span class="muted small">(ước theo km)</span></span><span>${fmtMoney(m.wear)}</span></div>
       <div class="ln"><span>− Chi phí chạy xe khác</span><span>${fmtMoney(m.rideExp)}</span></div>
