@@ -98,6 +98,11 @@
   }
 
   // ---------- Khoảng thời gian ----------
+  function dayRange(off) {
+    const t = new Date(); t.setHours(12, 0, 0, 0); t.setDate(t.getDate() + off);
+    const k = dateKey(t);
+    return { kind: 'day', off, from: k, to: k, buckets: [k], label: pad(t.getDate()) + '/' + pad(t.getMonth() + 1) + '/' + t.getFullYear() };
+  }
   function weekRange(off) {
     const t = new Date(); t.setHours(12, 0, 0, 0);
     const dow = (t.getDay() + 6) % 7; // T2 = 0
@@ -138,6 +143,7 @@
     return { kind: 'all', off: 0, from: first < today ? first : today, to: '9999-12-31', buckets, label: 'Tất cả' };
   }
   function rangeFor(s, kind, off) {
+    if (kind === 'day') return dayRange(off);
     if (kind === 'month') return monthRange(off);
     if (kind === 'all') return allRange(s);
     return weekRange(off);
@@ -288,7 +294,7 @@
     DEFAULT_SETTINGS, CATS, TYPE_LABEL, MAINT_ITEMS,
     emptyState, migrate, dateKey, keyToDate, todayKey,
     lastKnownOdo, fuelRate, shiftCalc,
-    weekRange, monthRange, allRange, rangeFor, summarize, series,
+    dayRange, weekRange, monthRange, allRange, rangeFor, summarize, series,
     oilStatus, wearSuggestion, lastDayOfPrevMonth, cashPosition,
     fmtInt, fmtMoney, fmtSigned, fmtShort, fmtDur, parseMoney,
   };

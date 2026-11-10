@@ -81,6 +81,14 @@
     return Math.floor(mins / 60) + ':' + pad(mins % 60);
   }
 
+  function shiftRow(sh) {
+    const c = L.shiftCalc(sh, S);
+    const d = new Date(sh.start);
+    return `<button class="row" data-act="edit-shift" data-id="${sh.id}">
+      <div class="l"><b>${dayLabel(d)}</b><span class="muted">${sh.noClock ? (c.hours > 0 ? fmtDur(c.hours) : 'không rõ giờ') : fmtTime(sh.start) + '–' + fmtTime(sh.end) + ' · ' + fmtDur(c.hours)} · ${fmtInt(c.km)} km${sh.trips ? ' · ' + sh.trips + ' chuyến' : ''}</span>${c.bonus ? `<span class="muted">gồm tip/thưởng ${fmtMoney(c.bonus)}</span>` : ''}</div>
+      <div class="amt ${sgn(c.profit)}">${fmtSigned(c.profit)}<span class="muted small" style="display:block;font-weight:500">thu ${fmtMoney(c.income)}</span></div></button>`;
+  }
+
   function viewShift() {
     const cur = L.lastKnownOdo(S);
     let top;
@@ -111,13 +119,7 @@
 
     const recent = sortedDesc(S.shifts, x => x.start).slice(0, 12);
     const list = recent.length
-      ? `<section class="card tight"><div class="group-h">Các ca gần đây</div>${recent.map(sh => {
-        const c = L.shiftCalc(sh, S);
-        const d = new Date(sh.start);
-        return `<button class="row" data-act="edit-shift" data-id="${sh.id}">
-          <div class="l"><b>${dayLabel(d)}</b><span class="muted">${sh.noClock ? (c.hours > 0 ? fmtDur(c.hours) : 'không rõ giờ') : fmtTime(sh.start) + '–' + fmtTime(sh.end) + ' · ' + fmtDur(c.hours)} · ${fmtInt(c.km)} km${sh.trips ? ' · ' + sh.trips + ' chuyến' : ''}</span>${c.bonus ? `<span class="muted">gồm tip/thưởng ${fmtMoney(c.bonus)}</span>` : ''}</div>
-          <div class="amt ${sgn(c.profit)}">${fmtSigned(c.profit)}<span class="muted small" style="display:block;font-weight:500">thu ${fmtMoney(c.income)}</span></div></button>`;
-      }).join('')}</section>`
+      ? `<section class="card tight"><div class="group-h">Các ca gần đây</div>${recent.map(shiftRow).join('')}</section>`
       : `<div class="empty">Chưa có ca nào.<br>Bấm "Bắt đầu ca" trước khi chạy, và "Kết thúc ca" khi xong.</div>`;
     const extraBtn = S.shifts.length
       ? `<button class="btn" data-act="add-extra" style="margin:0 0 14px">＋ Thêm tip / thưởng cho một ca đã chạy</button>` : '';
@@ -474,6 +476,19 @@
     return out + '</svg>';
   }
 
+  const periodLabel = r => (r.kind === 'day'
+    ? (r.off === 0 ? 'Hôm nay · ' : r.off === -1 ? 'Hôm qua · ' : '') + keyLabel(r.from)
+    : r.label);
+
+  // Chi tiết trong một ngày: các ca và khoản chi (bấm để sửa)
+  function dayDetail(k) {
+    const shifts = sortedDesc(S.shifts.filter(sh => L.dateKey(new Date(sh.start)) === k), x => x.start);
+    const exps = S.expenses.filter(e => e.date === k);
+    if (!shifts.length && !exps.length) return '';
+    return `<section class="card tight"><div class="group-h">Trong ngày</div>${shifts.map(shiftRow).join('')}${exps.map(e =>
+      `<button class="row" data-act="edit-expense" data-id="${e.id}"><div class="l"><span class="badge ${e.type}">${L.TYPE_LABEL[e.type]}</span><b>${esc(e.category)}</b>${e.note ? `<span class="muted">${esc(e.note)}</span>` : ''}</div><div class="amt">${fmtMoney(e.amount)}</div></button>`).join('')}</section>`;
+  }
+
   function viewOverview() {
     const r = L.rangeFor(S, period.kind, period.off);
     const m = L.summarize(S, r.from, r.to);
@@ -493,10 +508,10 @@
       if (days > 7) html += `<div class="alert bad"><div>💾 <b>${last ? 'Đã ' + Math.floor(days) + ' ngày chưa sao lưu.' : 'Bạn chưa sao lưu lần nào.'}</b> Dữ liệu chỉ nằm trên máy này.</div><button class="btn sm" data-act="export">Sao lưu</button></div>`;
     }
 
-    html += `<div class="period"><div class="seg">${[['week', 'Tuần'], ['month', 'Tháng'], ['all', 'Tất cả']].map(p =>
+    html += `<div class="period"><div class="seg">${[['day', 'Ngày'], ['week', 'Tuần'], ['month', 'Tháng'], ['all', 'Tất cả']].map(p =>
       `<button class="${period.kind === p[0] ? 'on' : ''}" data-act="period" data-k="${p[0]}">${p[1]}</button>`).join('')}</div></div>`;
     if (period.kind !== 'all') {
-      html += `<div class="nav-period"><button data-act="prev" aria-label="Kỳ trước">‹</button><b>${r.label}</b><button data-act="next" aria-label="Kỳ sau" ${period.off >= 0 ? 'disabled' : ''}>›</button></div>`;
+      html += `<div class="nav-period"><button data-act="prev" aria-label="Kỳ trước">‹</button><b>${periodLabel(r)}</b><button data-act="next" aria-label="Kỳ sau" ${period.off >= 0 ? 'disabled' : ''}>›</button></div>`;
     }
 
     if (!m.nShifts && !m.nExpenses) {
@@ -540,7 +555,9 @@
       <div class="metric"><div class="k">Số ca</div><div class="v">${m.nShifts}</div></div>
       <div class="metric"><div class="k">Số chuyến</div><div class="v">${m.trips || '—'}</div></div></div></section>`;
 
-    html += `<section class="card"><div class="eyebrow" style="margin-bottom:8px">Lợi nhuận theo ${period.kind === 'all' ? 'tháng' : 'ngày'}</div>${chartSVG(ser, period.kind)}</section>`;
+    html += period.kind === 'day'
+      ? dayDetail(r.from)
+      : `<section class="card"><div class="eyebrow" style="margin-bottom:8px">Lợi nhuận theo ${period.kind === 'all' ? 'tháng' : 'ngày'}</div>${chartSVG(ser, period.kind)}</section>`;
     return html;
   }
 
