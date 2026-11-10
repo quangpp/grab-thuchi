@@ -28,6 +28,9 @@
       expenses: [],      // { id,date,amount,type,category,note }
       maint: [],         // { id,date,odo,item,cost,note }
       odoLog: [],        // { id,date,odo }
+      capital: null,     // { date: 'YYYY-MM-DD', total, fund } — vốn ban đầu (không tính là thu nhập)
+      checks: [],        // { id,at,wallets,total,expected,diff } — các lần kiểm kê tiền thật
+      adjusts: [],       // { id,date,amount,note } — điều chỉnh sau kiểm kê
       lastBackup: null,
     };
   }
@@ -35,7 +38,7 @@
   function migrate(o) {
     const s = Object.assign(emptyState(), o || {});
     s.settings = Object.assign({}, DEFAULT_SETTINGS, (o && o.settings) || {});
-    ['shifts', 'fills', 'expenses', 'maint', 'odoLog'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
+    ['shifts', 'fills', 'expenses', 'maint', 'odoLog', 'checks', 'adjusts'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
     return s;
   }
 
@@ -206,6 +209,45 @@
     return { perKm: cost / km, km, cost };
   }
 
+  // ---------- Tiền thật đang cầm & quỹ sửa xe ----------
+  function lastDayOfPrevMonth() {
+    const t = new Date();
+    return dateKey(new Date(t.getFullYear(), t.getMonth(), 0, 12));
+  }
+
+  // Số dư kỳ vọng = vốn ban đầu + thu nhập − tiền thật đã chi (xăng đổ, sửa xe, chi khác, chi cá nhân) ± điều chỉnh.
+  // Chỉ tính các khoản SAU ngày chốt vốn. "Để dành" vẫn là tiền đang cầm nên không trừ.
+  function cashPosition(s) {
+    const cap = s.capital;
+    if (!cap) return null;
+    const after = k => k > cap.date;
+    const p = {
+      cap: cap.total || 0, income: 0, fuelAccr: 0, wearAccr: 0,
+      fuelPaid: 0, repairPaid: 0, rideExp: 0, personal: 0, saved: 0, adjust: 0,
+    };
+    const cur = fuelRate(s).rate;
+    s.shifts.forEach(sh => {
+      if (!after(dateKey(new Date(sh.start)))) return;
+      const c = shiftCalc(sh, s, cur);
+      p.income += c.income; p.fuelAccr += c.fuel; p.wearAccr += c.wear;
+    });
+    s.fills.forEach(f => { if (after(f.date)) p.fuelPaid += f.amount; });
+    s.maint.forEach(m => { if (after(m.date)) p.repairPaid += m.cost; });
+    s.expenses.forEach(e => {
+      if (!after(e.date)) return;
+      if (e.type === 'ride') p.rideExp += e.amount;
+      else if (e.type === 'personal') p.personal += e.amount;
+      else p.saved += e.amount;
+    });
+    s.adjusts.forEach(a => { p.adjust += a.amount; });
+    p.expected = p.cap + p.income - p.fuelPaid - p.repairPaid - p.rideExp - p.personal + p.adjust;
+    // Quỹ sửa xe: khấu hao trích theo km Grab − tiền bảo dưỡng/sửa xe đã trả (âm = đã chi vượt phần trích)
+    p.fund = (cap.fund || 0) + p.wearAccr - p.repairPaid;
+    p.spendable = p.expected - Math.max(0, p.fund) - p.saved;
+    p.commuteFuel = p.fuelPaid - p.fuelAccr; // xăng đi làm + chênh lệch lượng xăng còn trong bình
+    return p;
+  }
+
   // ---------- Định dạng ----------
   function fmtInt(n) {
     n = Math.round(Number(n) || 0);
@@ -247,7 +289,7 @@
     emptyState, migrate, dateKey, keyToDate, todayKey,
     lastKnownOdo, fuelRate, shiftCalc,
     weekRange, monthRange, allRange, rangeFor, summarize, series,
-    oilStatus, wearSuggestion,
+    oilStatus, wearSuggestion, lastDayOfPrevMonth, cashPosition,
     fmtInt, fmtMoney, fmtSigned, fmtShort, fmtDur, parseMoney,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

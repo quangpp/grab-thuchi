@@ -4,7 +4,7 @@
   const L = window.Logic;
   const KEY = 'grab-tracker-v1';
   const DAYS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-  const TITLES = { overview: 'Tổng quan', shift: 'Ca chạy', spend: 'Thu chi', car: 'Xe', settings: 'Cài đặt' };
+  const TITLES = { overview: 'Tổng quan', shift: 'Ca chạy', spend: 'Tiền', car: 'Xe', settings: 'Cài đặt' };
 
   let S = load();
   let tab = 'shift';
@@ -246,14 +246,89 @@
       </div>
       <button class="btn primary lg" data-act="add-expense">+ Thêm khoản chi</button></section>`;
     const items = sortedDesc(S.expenses, e => e.date + e.id).slice(0, 80);
-    if (!items.length) return head + `<div class="empty">Chưa có khoản chi nào.<br>Ghi cả khoản chạy xe (rửa xe, gửi xe...) lẫn tiền bạn lấy từ thu nhập Grab để dùng riêng.</div>`;
+    const money = cashCards();
+    if (!items.length) return money + head + `<div class="empty">Chưa có khoản chi nào.<br>Ghi cả khoản chạy xe (rửa xe, gửi xe...) lẫn tiền bạn lấy từ thu nhập Grab để dùng riêng.</div>`;
     const groups = {};
     items.forEach(e => (groups[e.date] = groups[e.date] || []).push(e));
     const html = Object.keys(groups).sort().reverse().map(k =>
       `<div class="group-h">${keyLabel(k)}</div>` + groups[k].map(e =>
         `<button class="row" data-act="edit-expense" data-id="${e.id}"><div class="l"><span class="badge ${e.type}">${L.TYPE_LABEL[e.type]}</span><b>${esc(e.category)}</b>${e.note ? `<span class="muted">${esc(e.note)}</span>` : ''}</div><div class="amt">${fmtMoney(e.amount)}</div></button>`).join('')
     ).join('');
-    return head + `<section class="card tight">${html}</section>`;
+    return money + head + `<section class="card tight">${html}</section>`;
+  }
+
+  // ---- Tiền đang cầm, kiểm kê, quỹ sửa xe
+  const WALLETS = [['cash', 'Tiền mặt đang cầm'], ['income', 'Ví thu nhập Grab'], ['topup', 'Ví nạp Grab'], ['bank', 'Tài khoản ngân hàng']];
+
+  function cashCards() {
+    const p = L.cashPosition(S);
+    if (!p) {
+      return `<section class="card"><div class="eyebrow">Tiền Grab đang cầm</div>
+        <h2 style="margin-top:6px">Thiết lập vốn ban đầu</h2>
+        <p class="muted small" style="margin:0 0 4px">Nhập một lần số tiền bạn đang có từ trước (ví dụ lợi nhuận tháng vừa rồi). Số này <b>không tính là thu nhập</b>, chỉ là mốc để app đối soát với tiền thật.</p>
+        <button class="btn primary lg" data-act="set-capital">Nhập vốn ban đầu</button></section>`;
+    }
+    const cd = S.capital.date.slice(8) + '/' + S.capital.date.slice(5, 7);
+    const last = sortedDesc(S.checks, c => c.at).slice(0, 3);
+    return `<section class="card flow"><div class="eyebrow">Tiền Grab đang cầm (theo app)</div>
+        <div class="ln" style="margin-top:6px"><span>Vốn ban đầu <span class="muted small">(chốt ${cd})</span></span><span>${fmtMoney(p.cap)}</span></div>
+        <div class="ln"><span>+ Thu nhập các ca <span class="muted small">(thu ròng + tip)</span></span><span>${fmtMoney(p.income)}</span></div>
+        <div class="ln"><span>− Xăng đã đổ</span><span>${fmtMoney(p.fuelPaid)}</span></div>
+        ${p.fuelPaid > 0 ? `<div class="ln sub"><span>trong đó xăng đi làm / chênh tồn bình</span><span>${fmtMoney(p.commuteFuel)}</span></div>` : ''}
+        <div class="ln"><span>− Bảo dưỡng, sửa xe đã trả</span><span>${fmtMoney(p.repairPaid)}</span></div>
+        <div class="ln"><span>− Chi chạy xe khác</span><span>${fmtMoney(p.rideExp)}</span></div>
+        <div class="ln"><span>− Chi cá nhân</span><span>${fmtMoney(p.personal)}</span></div>
+        ${p.adjust ? `<div class="ln"><span>± Điều chỉnh sau kiểm kê</span><span>${fmtSigned(p.adjust)}</span></div>` : ''}
+        <div class="ln sum"><span>Tiền đang cầm</span><span>${fmtMoney(p.expected)}</span></div>
+      </section>
+      <section class="card"><div class="eyebrow">Chia ra</div>
+        <div class="kv" style="margin-top:6px"><span>🔧 Quỹ sửa xe</span><b class="${p.fund < 0 ? 'neg' : ''}">${fmtMoney(p.fund)}</b></div>
+        <div class="hint" style="margin:-2px 0 6px">Đã trích ${fmtMoney((S.capital.fund || 0) + p.wearAccr)} (km Grab × hao mòn), đã trả sửa xe ${fmtMoney(p.repairPaid)}.${p.fund < 0 ? ' Âm nghĩa là đã chi vượt phần trích (phần thiếu lấy từ tiền tiêu được).' : ''}</div>
+        <div class="kv"><span>🏦 Để dành</span><b>${fmtMoney(p.saved)}</b></div>
+        <div class="kv" style="border-top:1.5px solid var(--text);margin-top:6px;padding-top:10px"><span style="color:var(--text);font-weight:700">✅ Tiền tiêu được</span><b class="${sgn(p.spendable)}" style="font-size:18px">${fmtMoney(p.spendable)}</b></div>
+        <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-act="check-money">Kiểm kê tiền thật</button><button class="btn" data-act="set-capital">Sửa vốn đầu</button></div>
+        ${last.length ? `<div class="group-h" style="padding-left:0;margin-top:8px">Các lần kiểm kê gần đây</div>${last.map(c => `<div class="kv"><span>${fmtDM(c.at)} ${fmtTime(c.at)} · thực tế ${fmtMoney(c.total)}</span><b class="${c.diff === 0 ? 'pos' : sgn(c.diff)}">${c.diff === 0 ? 'khớp' : fmtSigned(c.diff)}</b></div>`).join('')}` : ''}
+      </section>`;
+  }
+
+  function capitalSheet() {
+    const c = S.capital;
+    openSheet(c ? 'Sửa vốn ban đầu' : 'Vốn ban đầu', `
+      <p class="muted small" style="margin:0 0 12px">Số tiền bạn đang có từ trước (ví dụ lợi nhuận tháng vừa rồi). Không tính là thu nhập. Chỉ các ca, khoản chi, đổ xăng, bảo dưỡng <b>sau ngày chốt</b> mới được cộng hoặc trừ vào.</p>
+      ${dateField('f-date', 'Ngày chốt (tiền tính tới hết ngày này)', c ? c.date : L.lastDayOfPrevMonth())}
+      ${moneyField('f-cap', 'Tổng vốn ban đầu', c ? c.total : '', { focus: true })}
+      ${moneyField('f-capfund', 'Trong đó đã để dành cho sửa xe (tuỳ chọn)', c && c.fund ? c.fund : '', { hint: 'Bỏ trống nếu quỹ sửa xe bắt đầu từ 0.' })}
+      <div class="err" id="err"></div>
+      <button class="btn primary lg" data-act="save-capital">Lưu</button>
+      ${c ? '<button class="link danger" data-act="del-capital">Xoá vốn ban đầu</button>' : ''}`);
+  }
+
+  function checkTotal() {
+    let t = 0, any = false;
+    WALLETS.forEach(w => { const v = getInt('f-w-' + w[0]); if (!isNaN(v)) { t += v; any = true; } });
+    return any ? t : null;
+  }
+  function updateCheckSummary() {
+    const el = $('#chk-sum'); if (!el) return;
+    const exp = Number(el.dataset.expected), t = checkTotal();
+    const d = t == null ? 0 : t - exp;
+    el.innerHTML = `<div class="kv"><span>Tổng thực tế</span><b>${t == null ? '—' : fmtMoney(t)}</b></div>
+      <div class="kv"><span>Theo app</span><b>${fmtMoney(exp)}</b></div>` + (t == null ? '' :
+      `<div class="kv"><span>Chênh lệch</span><b class="${d === 0 ? 'pos' : sgn(d)}">${d === 0 ? 'Khớp' : fmtSigned(d)}</b></div>
+       <div class="hint">${d > 0 ? 'Thực tế nhiều hơn app: có thể quên ghi một khoản thu/tip, hoặc ghi dư một khoản chi.' : d < 0 ? 'Thực tế ít hơn app: có thể quên ghi một khoản chi (xăng, ăn uống...) hoặc ghi dư thu nhập.' : 'Số liệu khớp với tiền thật.'}</div>`);
+  }
+  function checkSheet() {
+    const p = L.cashPosition(S);
+    if (!p) { toast('Hãy nhập vốn ban đầu trước'); return; }
+    openSheet('Kiểm kê tiền thật', `
+      <p class="muted small" style="margin:0 0 12px">Nhập số dư thật ở từng nơi đang giữ tiền Grab (bỏ trống nếu không có).</p>
+      ${WALLETS.map((w, i) => moneyField('f-w-' + w[0], w[1], '', { focus: i === 0 })).join('')}
+      <div class="card" id="chk-sum" data-expected="${Math.round(p.expected)}" style="margin:0 0 12px;background:var(--bg);box-shadow:none"></div>
+      <div class="err" id="err"></div>
+      <button class="btn primary lg" data-act="save-check">Lưu kiểm kê</button>
+      <button class="btn" style="margin-top:10px" data-act="save-check" data-adjust="1">Lưu và ghi điều chỉnh chênh lệch</button>
+      <div class="hint">"Ghi điều chỉnh" làm số theo app khớp lại với tiền thật, để các lần kiểm kê sau không bị lệch tiếp.</div>`);
+    updateCheckSummary();
   }
 
   function catsFor(type) {
@@ -505,7 +580,7 @@
 
   A.tab = el => { tab = el.dataset.tab; render(true); };
   A['close-sheet'] = () => closeSheet();
-  A.zeros = el => { const i = $('#' + el.dataset.t); if (!i) return; const d = i.value.replace(/\D/g, '') || '0'; i.value = L.fmtInt(Number(d + '000')); i.focus(); };
+  A.zeros = el => { const i = $('#' + el.dataset.t); if (!i) return; const d = i.value.replace(/\D/g, '') || '0'; i.value = L.fmtInt(Number(d + '000')); i.focus(); updateCheckSummary(); };
 
   // Ca
   A['start-shift'] = () => {
@@ -608,6 +683,35 @@
     const sh = S.shifts.find(x => x.id === el.dataset.shift); if (!sh) return;
     sh.extras = (sh.extras || []).filter(x => x.id !== el.dataset.id);
     save(); render(); if (sh.noClock) simpleSheet(sh); else shiftSheet('edit', sh);
+  };
+
+  // Vốn ban đầu, kiểm kê
+  A['set-capital'] = () => capitalSheet();
+  A['save-capital'] = () => {
+    const total = getInt('f-cap'), fund = getInt('f-capfund') || 0, date = val('f-date');
+    if (!date) return setErr('Chọn ngày chốt.');
+    if (isNaN(total)) return setErr('Nhập tổng vốn ban đầu.');
+    if (fund > total) return setErr('Phần để dành cho sửa xe không thể lớn hơn tổng vốn.');
+    S.capital = { date, total, fund };
+    save(); closeSheet(); render(); toast('Đã lưu vốn ban đầu');
+  };
+  A['del-capital'] = () => {
+    if (!confirm('Xoá vốn ban đầu? Các lần kiểm kê và điều chỉnh cũng sẽ bị xoá.')) return;
+    S.capital = null; S.checks = []; S.adjusts = [];
+    save(); closeSheet(); render(); toast('Đã xoá');
+  };
+  A['check-money'] = () => checkSheet();
+  A['save-check'] = el => {
+    const p = L.cashPosition(S), total = checkTotal();
+    if (total == null) return setErr('Nhập ít nhất một số dư.');
+    const wallets = {};
+    WALLETS.forEach(w => { const v = getInt('f-w-' + w[0]); wallets[w[0]] = isNaN(v) ? 0 : v; });
+    const expected = Math.round(p.expected), diff = total - expected;
+    S.checks.push({ id: uid(), at: new Date().toISOString(), wallets, total, expected, diff });
+    const adjust = el.dataset.adjust && diff !== 0;
+    if (adjust) S.adjusts.push({ id: uid(), date: L.todayKey(), amount: diff, note: 'Điều chỉnh sau kiểm kê' });
+    save(); closeSheet(); render();
+    toast(diff === 0 ? 'Khớp hoàn toàn!' : adjust ? 'Đã ghi điều chỉnh ' + fmtSigned(diff) : 'Đã lưu kiểm kê, chênh ' + fmtSigned(diff));
   };
 
   // Chi
@@ -715,6 +819,7 @@
     if (t.matches && t.matches('input.money, input.int')) {
       const d = t.value.replace(/\D/g, '');
       t.value = d ? L.fmtInt(Number(d)) : '';
+      if (t.id && t.id.indexOf('f-w-') === 0) updateCheckSummary();
     }
   });
 
