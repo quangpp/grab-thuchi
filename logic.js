@@ -5,6 +5,7 @@
   const DEFAULT_SETTINGS = {
     baseOdo: 0,         // odo ban đầu (km) — nhập trong Cài đặt hoặc ở lần bắt đầu ca đầu tiên
     fuelPrice: 22000,   // đ/lít
+    fuelPriceDate: null, // ngày cập nhật giá xăng gần nhất (YYYY-MM-DD)
     fuelL100: 2.2,      // lít / 100 km (mặc định cho tới khi học được từ các lần đổ xăng)
     wearPerKm: 240,     // đ/km hao mòn (nhớt, lốp, phanh, sên nhông...)
     oilInterval: 2000,  // km giữa hai lần thay nhớt
@@ -82,6 +83,14 @@
       }
     }
     return { rate: def, source: 'default', n: 0, def };
+  }
+
+  // Nhắc cập nhật giá xăng: chỉ khi app còn dùng giá xăng để ước tính (chưa học được số thật) và giá đã cũ > 7 ngày
+  function fuelPriceStatus(s) {
+    if (fuelRate(s).source === 'learned') return { show: false };
+    const d = s.settings.fuelPriceDate;
+    const days = d ? Math.floor((Date.now() - keyToDate(d).getTime()) / 864e5) : null;
+    return { show: d == null || days > 7, date: d, days };
   }
 
   // ---------- Một ca ----------
@@ -307,7 +316,7 @@
   const api = {
     DEFAULT_SETTINGS, CATS, TYPE_LABEL, MAINT_ITEMS,
     emptyState, migrate, dateKey, keyToDate, todayKey,
-    lastKnownOdo, fuelRate, shiftCalc,
+    lastKnownOdo, fuelRate, fuelPriceStatus, shiftCalc,
     dayRange, weekRange, monthRange, allRange, rangeFor, summarize, series,
     oilStatus, wearSuggestion, lastDayOfPrevMonth, cashPosition,
     fmtInt, fmtKm, fmtMoney, fmtSigned, fmtShort, fmtDur, parseMoney,
