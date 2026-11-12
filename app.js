@@ -92,7 +92,7 @@
     const st = L.fuelPriceStatus(S);
     if (!st.show) return '';
     const msg = st.date ? `Giá xăng đã ${st.days} ngày chưa cập nhật` : 'Bạn chưa xác nhận giá xăng';
-    return `<div class="alert"><div>⛽ <b>${msg}</b> (đang dùng ${fmtInt(S.settings.fuelPrice)}đ/lít). Giá đổi thì ước tính xăng/km sẽ lệch.</div>
+    return `<div class="alert"><div>⛽ <b>${msg}</b> (đang dùng ${fmtInt(L.priceOn(S, L.todayKey()))}đ/lít). Giá chỉ ảnh hưởng các ca từ hôm nay trở đi.</div>
       <div style="display:flex;flex-direction:column;gap:6px;margin-left:auto;flex:none">
         <button class="btn sm" data-act="price-sheet" style="margin:0">Cập nhật</button>
         <button class="btn sm" data-act="price-same" style="margin:0">Chưa đổi</button></div></div>`;
@@ -403,6 +403,7 @@
     const cur = L.lastKnownOdo(S);
     const oil = L.oilStatus(S);
     const fr = L.fuelRate(S);
+    const legacyShifts = S.shifts.filter(sh => sh.fuelPrice == null).length;
     const sug = L.wearSuggestion(S);
 
     let oilCard;
@@ -426,8 +427,12 @@
         <button class="btn" data-act="add-maint">🔧 Bảo dưỡng khác</button></div></section>`;
 
     const rates = `<section class="card"><div class="eyebrow">Đơn giá đang dùng để tính lãi</div>
-      <div class="kv" style="margin-top:6px"><span>Xăng</span><b>${fmtInt(fr.rate)}đ/km</b></div>
-      <div class="hint" style="margin:-2px 0 8px">${fr.source === 'learned' ? `Học từ ${fr.n} lần đổ đầy bình (${fmtInt(fr.dist)} km).` : `Ước tính: ${S.settings.fuelL100} lít/100km × ${fmtInt(S.settings.fuelPrice)}đ/lít. Đổ đầy bình ≥ 2 lần (kèm odo) thì tool tự tính số thật.`}</div>
+      <div class="kv" style="margin-top:6px"><span>Mức tiêu hao</span><b>${fr.l100.toFixed(2).replace('.', ',')} lít/100km</b></div>
+      <div class="hint" style="margin:-2px 0 6px">${fr.source === 'learned' ? `Học từ ${fr.n} khoảng đổ đầy bình (${fmtInt(fr.dist)} km, ${fr.liters.toFixed(1).replace('.', ',')} lít), không phụ thuộc giá xăng.` : 'Đang dùng số ước tính ở Cài đặt. Đổ đầy bình ≥ 2 lần kèm odo (tổng ≥ 100 km) thì app tự học số thật.'}</div>
+      <div class="kv"><span>Giá xăng hôm nay</span><b>${fmtInt(fr.price)}đ/lít</b></div>
+      <div class="hint" style="margin:-2px 0 6px">Xăng mỗi ca = km × mức tiêu hao × giá xăng của ngày chạy. Giá đổi chỉ ảnh hưởng các ca từ ngày đó trở đi.</div>
+      <div class="kv"><span>→ Xăng hiện tại</span><b>${fmtInt(fr.rate)}đ/km</b></div>
+      ${legacyShifts ? `<div class="alert" style="margin:10px 0"><div><b>${legacyShifts} ca</b> đang dùng đơn giá xăng/km cũ đã lưu. Bấm để tính lại theo mức tiêu hao mới và giá xăng đúng ngày chạy.</div><button class="btn sm" data-act="recalc-fuel" style="margin:0">Tính lại</button></div>` : ''}
       <div class="kv"><span>Hao mòn xe</span><b>${fmtInt(S.settings.wearPerKm)}đ/km</b></div>
       ${sug ? `<div class="alert ok" style="margin:8px 0 0"><div>Chi bảo dưỡng thật ≈ <b>${fmtInt(sug.perKm)}đ/km</b> (${fmtMoney(sug.cost)} / ${fmtInt(sug.km)} km). Bạn có thể chỉnh trong Cài đặt.</div></div>` : `<div class="hint">Sau vài lần bảo dưỡng (≥ 3.000 km) tool sẽ gợi ý chỉnh lại số này.</div>`}</section>`;
 
@@ -440,12 +445,12 @@
       if (!prev || f.full === false) return;
       const gap = S.fills.some(x => !(x.odo > 0) && x.date > prev.date && x.date <= f.date);
       const km = f.odo - prev.odo;
-      if (km > 0 && !gap) stat[f.id] = { km, per: f.amount / km };
+      if (km > 0 && !gap) stat[f.id] = { km, l100: L.litersOf(f, S) / km * 100 };
     });
     const shownFills = sortedDesc(S.fills, f => f.date + String(f.odo || 0).padStart(8, '0')).slice(0, 15);
     const fillList = shownFills.length ? `<section class="card tight"><div class="group-h">Lịch sử đổ xăng</div>${shownFills.map(f => {
       const st = stat[f.id];
-      return `<button class="row" data-act="edit-fill" data-id="${f.id}"><div class="l"><b>${keyLabel(f.date)}</b><span class="muted">${f.odo > 0 ? 'odo ' + fmtInt(f.odo) : 'chưa có odo'}${f.liters ? ' · ' + String(f.liters).replace('.', ',') + ' lít' : ''}${f.full === false ? ' · chưa đầy' : ''}${st ? ` · ${fmtInt(st.km)} km · ${fmtInt(st.per)}đ/km` : ''}</span></div><div class="amt">${fmtMoney(f.amount)}</div></button>`;
+      return `<button class="row" data-act="edit-fill" data-id="${f.id}"><div class="l"><b>${keyLabel(f.date)}</b><span class="muted">${f.odo > 0 ? 'odo ' + fmtInt(f.odo) : 'chưa có odo'} · ${f.pricePerL ? fmtInt(f.pricePerL) + 'đ/lít' : 'chưa có giá/lít'} · ${L.litersOf(f, S).toFixed(2).replace('.', ',')} lít${f.full === false ? ' · chưa đầy' : ''}${st ? ` · ${fmtInt(st.km)} km · ${st.l100.toFixed(2).replace('.', ',')} L/100km` : ''}</span></div><div class="amt">${fmtMoney(f.amount)}</div></button>`;
     }).join('')}</section>` : '';
 
     const maint = sortedDesc(S.maint, m => m.odo).slice(0, 15);
@@ -467,14 +472,22 @@
   function fillSheet(f) {
     openSheet(f ? 'Sửa lần đổ xăng' : 'Đổ xăng', `
       ${moneyField('f-amt', 'Số tiền đổ', f ? f.amount : '', { focus: !f })}
-      ${intField('f-odo', 'Odo lúc đổ (tuỳ chọn)', f && f.odo > 0 ? f.odo : '', { suf: 'km', ph: fmtInt(L.lastKnownOdo(S)), hint: 'Không nhớ thì để trống: khoản này vẫn tính vào tiền xăng đã đổ (đối soát tiền), chỉ chưa dùng để học đơn giá xăng/km.' })}
-      <div class="fld"><label for="f-liters">Số lít (tuỳ chọn)</label><input id="f-liters" inputmode="decimal" class="dec" placeholder="vd 2,8" value="${f && f.liters ? String(f.liters).replace('.', ',') : ''}"></div>
+      ${moneyField('f-ppl', 'Giá xăng trên máy bơm (đ/lít)', f ? (f.pricePerL || (f.liters > 0 ? Math.round(f.amount / f.liters) : '')) : L.priceOn(S, L.todayKey()), { noZeros: true })}
+      <div class="hint" id="fill-liters" style="margin:-6px 0 12px"></div>
+      ${intField('f-odo', 'Odo lúc đổ', f && f.odo > 0 ? f.odo : '', { suf: 'km', ph: fmtInt(L.lastKnownOdo(S)), hint: 'Nên nhập mỗi lần để app học mức tiêu hao. Không nhớ thì để trống: khoản này vẫn tính vào tiền xăng đã đổ.' })}
       <label class="check"><input type="checkbox" id="f-full" ${!f || f.full !== false ? 'checked' : ''}> Đã đổ đầy bình</label>
-      <div class="hint" style="margin:-6px 0 10px">Đổ đầy bình mỗi lần thì tool tính được đơn giá xăng/km chính xác.</div>
+      <div class="hint" style="margin:-6px 0 10px">Đổ đầy bình mỗi lần thì app tính được mức tiêu hao lít/100km chính xác.</div>
       ${dateField('f-date', 'Ngày', f ? f.date : L.todayKey())}
       <div class="err" id="err"></div>
       <button class="btn primary lg" data-act="save-fill" data-id="${f ? f.id : ''}">${f ? 'Lưu thay đổi' : 'Lưu'}</button>
       ${f ? `<button class="link danger" data-act="del-fill" data-id="${f.id}">Xoá</button>` : ''}`);
+    updateFillLiters();
+  }
+  // Hiện số lít ước tính ngay khi nhập tiền và giá/lít
+  function updateFillLiters() {
+    const el = $('#fill-liters'); if (!el) return;
+    const a = getInt('f-amt'), p = getInt('f-ppl');
+    el.textContent = (!isNaN(a) && !isNaN(p) && p > 0) ? `≈ ${(a / p).toFixed(2).replace('.', ',')} lít` : 'Nhập số tiền và giá/lít để app tự tính số lít.';
   }
 
   function maintSheet(m, preset) {
@@ -628,7 +641,7 @@
     const nField = (key, label, v, suf, cls, hint) => `<div class="fld"><label>${label}</label><div class="inwrap noK"><input class="${cls}" data-setting="${key}" inputmode="${cls === 'dec' ? 'decimal' : 'numeric'}" value="${cls === 'dec' ? String(v).replace('.', ',') : fmtInt(v)}"><span class="suf">${suf}</span></div>${hint ? `<div class="hint">${hint}</div>` : ''}</div>`;
     return `<section class="card"><h2>Thông số xe</h2>
         ${nField('baseOdo', 'Odo ban đầu', st.baseOdo, 'km', 'int', 'Mốc khởi đầu, nhập odo hiện tại của xe nếu chưa có. Các lần nhập odo sau sẽ thay thế.')}
-        ${nField('fuelPrice', 'Giá xăng hiện tại', st.fuelPrice, 'đ/lít', 'int', st.fuelPriceDate ? 'Cập nhật lần cuối: ' + st.fuelPriceDate.slice(8) + '/' + st.fuelPriceDate.slice(5, 7) + '. Giá chỉ dùng để ước tính cho tới khi app học được xăng/km thật.' : 'Chưa xác nhận lần nào. Giá chỉ dùng để ước tính cho tới khi app học được xăng/km thật.')}
+        ${nField('fuelPrice', 'Giá xăng hiện tại', st.fuelPrice, 'đ/lít', 'int', st.fuelPriceDate ? 'Cập nhật lần cuối: ' + st.fuelPriceDate.slice(8) + '/' + st.fuelPriceDate.slice(5, 7) + '. Giá chỉ ảnh hưởng các ca từ ngày cập nhật trở đi.' : 'Chưa xác nhận lần nào. Giá chỉ ảnh hưởng các ca từ ngày cập nhật trở đi.')}
         ${nField('fuelL100', 'Mức tiêu hao ước tính', st.fuelL100, 'lít/100km', 'dec', 'Chỉ dùng tới khi tool học được số thật từ các lần đổ xăng.')}
         ${nField('wearPerKm', 'Hao mòn xe', st.wearPerKm, 'đ/km', 'int', 'Nhớt + lốp + phanh + sên nhông... Mặc định 240đ/km, chỉnh theo thực tế (giá nhớt, lốp... ở tiệm của bạn).')}
         ${nField('oilInterval', 'Chu kỳ thay nhớt', st.oilInterval, 'km', 'int')}
@@ -657,7 +670,7 @@
 
   A.tab = el => { tab = el.dataset.tab; render(true); };
   A['close-sheet'] = () => closeSheet();
-  A.zeros = el => { const i = $('#' + el.dataset.t); if (!i) return; const d = i.value.replace(/\D/g, '') || '0'; i.value = L.fmtInt(Number(d + '000')); i.focus(); updateCheckSummary(); };
+  A.zeros = el => { const i = $('#' + el.dataset.t); if (!i) return; const d = i.value.replace(/\D/g, '') || '0'; i.value = L.fmtInt(Number(d + '000')); i.focus(); updateCheckSummary(); updateFillLiters(); };
 
   // Ca
   A['start-shift'] = () => {
@@ -704,7 +717,7 @@
       km, odoStart: oS, odoEnd: oE, net, bonus: getInt('f-bonus') || 0, trips: getInt('f-trips') || 0,
     };
     if (el.dataset.id) Object.assign(S.shifts.find(x => x.id === el.dataset.id), data);
-    else S.shifts.push(Object.assign({ id: uid(), fuelRate: L.fuelRate(S).rate, wearRate: Number(S.settings.wearPerKm) || 0 }, data));
+    else S.shifts.push(Object.assign({ id: uid(), fuelPrice: L.priceOn(S, date), wearRate: Number(S.settings.wearPerKm) || 0 }, data));
     save(); closeSheet(); render();
     if (el.dataset.next) {
       const nd = L.keyToDate(date); nd.setDate(nd.getDate() + 1);
@@ -731,7 +744,7 @@
       Object.assign(sh, { start, end, odoStart: oS, odoEnd: oE, net, bonus, trips });
       save(); closeSheet(); render(); toast('Đã lưu');
     } else {
-      const sh = { id: uid(), start, end, odoStart: oS, odoEnd: oE, net, bonus, trips, fuelRate: L.fuelRate(S).rate, wearRate: Number(S.settings.wearPerKm) || 0 };
+      const sh = { id: uid(), start, end, odoStart: oS, odoEnd: oE, net, bonus, trips, fuelPrice: L.priceOn(S, L.dateKey(new Date(start))), wearRate: Number(S.settings.wearPerKm) || 0 };
       S.shifts.push(sh);
       if (mode === 'end') S.active = null;
       save(); closeSheet(); render(); showShiftResult(sh);
@@ -763,10 +776,19 @@
     save(); render(); if (sh.noClock) simpleSheet(sh); else shiftSheet('edit', sh);
   };
 
+  // Tính lại xăng cho các ca cũ (còn dùng đơn giá đ/km đã lưu) theo mô hình mới
+  A['recalc-fuel'] = () => {
+    const legacy = S.shifts.filter(sh => sh.fuelPrice == null);
+    if (!legacy.length) return;
+    if (!confirm(`Tính lại xăng cho ${legacy.length} ca cũ theo mức tiêu hao hiện tại và giá xăng đúng ngày chạy? Số liệu các ca này sẽ thay đổi.`)) return;
+    legacy.forEach(sh => { sh.fuelPrice = L.priceOn(S, L.dateKey(new Date(sh.start))); delete sh.fuelRate; });
+    save(); render(); toast('Đã tính lại ' + legacy.length + ' ca');
+  };
+
   // Giá xăng: nhắc và nhập nhanh
   A['price-sheet'] = () => {
     openSheet('Cập nhật giá xăng', `
-      ${moneyField('f-price', 'Giá xăng bạn đổ (đ/lít)', S.settings.fuelPrice, { focus: true })}
+      ${moneyField('f-price', 'Giá xăng bạn đổ (đ/lít)', L.priceOn(S, L.todayKey()), { focus: true })}
       <div class="hint" style="margin:-6px 0 10px">Giá chỉ dùng để ước tính xăng/km cho tới khi app học được số thật từ các lần đổ đầy bình kèm odo.</div>
       <div class="err" id="err"></div>
       <button class="btn primary lg" data-act="save-price">Lưu giá mới</button>
@@ -776,6 +798,7 @@
     const v = getInt('f-price');
     if (isNaN(v) || v < 5000 || v > 100000) return setErr('Nhập giá xăng hợp lệ (đ/lít), ví dụ 20.890.');
     S.settings.fuelPrice = v; S.settings.fuelPriceDate = L.todayKey();
+    S.priceLog.push({ id: uid(), date: L.todayKey(), price: v });
     save(); closeSheet(); render(); toast('Đã cập nhật giá xăng ' + fmtInt(v) + 'đ/lít');
   };
   A['price-same'] = () => {
@@ -873,11 +896,22 @@
   A['add-fill'] = () => fillSheet(null);
   A['edit-fill'] = el => { const f = S.fills.find(x => x.id === el.dataset.id); if (f) fillSheet(f); };
   A['save-fill'] = el => {
-    const amount = getInt('f-amt'), odo = getInt('f-odo'), liters = getDec('f-liters');
+    const amount = getInt('f-amt'), odo = getInt('f-odo'), ppl = getInt('f-ppl');
     if (isNaN(amount) || amount <= 0) return setErr('Nhập số tiền đổ xăng.');
-    const data = { amount, odo: isNaN(odo) || odo <= 0 ? null : odo, liters: isNaN(liters) ? null : liters, full: $('#f-full').checked, date: val('f-date') || L.todayKey() };
+    if (!isNaN(ppl) && (ppl < 5000 || ppl > 100000)) return setErr('Giá/lít không hợp lệ (ví dụ 20.890).');
+    const date = val('f-date') || L.todayKey();
+    const pricePerL = isNaN(ppl) ? null : ppl;
+    const data = {
+      amount, odo: isNaN(odo) || odo <= 0 ? null : odo, pricePerL,
+      liters: pricePerL ? Math.round(amount / pricePerL * 100) / 100 : null, // số lít = tiền ÷ giá/lít
+      full: $('#f-full').checked, date,
+    };
     if (el.dataset.id) Object.assign(S.fills.find(x => x.id === el.dataset.id), data);
     else S.fills.push(Object.assign({ id: uid() }, data));
+    // Giá/lít vừa ghi cũng là giá xăng hiện tại nếu mới hơn lần xác nhận trước
+    if (pricePerL && (!S.settings.fuelPriceDate || date >= S.settings.fuelPriceDate)) {
+      S.settings.fuelPrice = pricePerL; S.settings.fuelPriceDate = date;
+    }
     save(); closeSheet(); render(); toast('Đã lưu lần đổ xăng');
   };
   A['del-fill'] = el => { if (confirm('Xoá lần đổ xăng này?')) { S.fills = S.fills.filter(x => x.id !== el.dataset.id); save(); closeSheet(); render(); } };
@@ -938,6 +972,7 @@
       const d = t.value.replace(/\D/g, '');
       t.value = d ? L.fmtInt(Number(d)) : '';
       if (t.id && t.id.indexOf('f-w-') === 0) updateCheckSummary();
+      if (t.id === 'f-amt' || t.id === 'f-ppl') updateFillLiters();
     }
   });
 
@@ -949,7 +984,7 @@
       const v = key === 'fuelL100' ? parseFloat(t.value.replace(',', '.')) : Number(t.value.replace(/\D/g, ''));
       if (!isFinite(v) || v <= 0) { toast('Giá trị không hợp lệ'); render(); return; }
       S.settings[key] = v;
-      if (key === 'fuelPrice') S.settings.fuelPriceDate = L.todayKey();
+      if (key === 'fuelPrice') { S.settings.fuelPriceDate = L.todayKey(); S.priceLog.push({ id: uid(), date: L.todayKey(), price: v }); }
       save(); toast('Đã lưu cài đặt');
     }
   });

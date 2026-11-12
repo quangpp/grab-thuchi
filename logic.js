@@ -33,6 +33,7 @@
       checks: [],        // { id,at,wallets,total,expected,diff } — các lần kiểm kê tiền thật
       adjusts: [],       // { id,date,amount,note } — điều chỉnh sau kiểm kê
       fundPuts: [],      // { id,date,amount } — các lần tách tiền ra để riêng cho quỹ bảo trì
+      priceLog: [],      // { id,date,price } — các lần cập nhật giá xăng thủ công (giá/lít)
       lastBackup: null,
     };
   }
@@ -40,7 +41,11 @@
   function migrate(o) {
     const s = Object.assign(emptyState(), o || {});
     s.settings = Object.assign({}, DEFAULT_SETTINGS, (o && o.settings) || {});
-    ['shifts', 'fills', 'expenses', 'maint', 'odoLog', 'checks', 'adjusts', 'fundPuts'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
+    ['shifts', 'fills', 'expenses', 'maint', 'odoLog', 'checks', 'adjusts', 'fundPuts', 'priceLog'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
+    // Dữ liệu cũ: giá xăng đã xác nhận trước đây trở thành mốc đầu tiên của nhật ký giá
+    if (!s.priceLog.length && s.settings.fuelPriceDate && s.settings.fuelPrice > 0) {
+      s.priceLog.push({ id: 'seed', date: s.settings.fuelPriceDate, price: s.settings.fuelPrice });
+    }
     return s;
   }
 
@@ -61,51 +66,94 @@
     return m;
   }
 
-  // ---------- Đơn giá xăng/km: học từ các lần đổ đầy bình ----------
-  function fuelRate(s) {
-    const st = s.settings;
-    const def = (Number(st.fuelL100) || 0) / 100 * (Number(st.fuelPrice) || 0);
+  // ---------- Giá xăng theo ngày (nhật ký giá) ----------
+  // Nhật ký giá = giá/lít ghi ở mỗi lần đổ xăng + các lần cập nhật giá thủ công. Giá của một ngày = lần ghi gần nhất
+  // trước hoặc đúng ngày đó (ngày quá sớm thì lấy mốc giá đầu tiên). Đổi giá hôm nay không làm đổi các ca cũ.
+  function priceEvents(s) {
+    const ev = [];
+    s.fills.forEach(f => { if (f.pricePerL > 0) ev.push({ date: f.date, price: f.pricePerL }); });
+    (s.priceLog || []).forEach(p => { if (p.price > 0) ev.push({ date: p.date, price: p.price }); });
+    return ev.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  }
+  function priceOn(s, k) {
+    const ev = priceEvents(s);
+    if (!ev.length) return Number(s.settings.fuelPrice) || 0;
+    let best = null;
+    ev.forEach(e => { if (e.date <= k) best = e; });
+    return (best || ev[0]).price;
+  }
+  function latestPriceDate(s) {
+    let d = s.settings.fuelPriceDate || null;
+    priceEvents(s).forEach(e => { if (!d || e.date > d) d = e.date; });
+    return d;
+  }
+
+  // Số lít của một lần đổ: ưu tiên số lít đã có, không thì tiền ÷ giá/lít (giá của lần đó, hoặc giá của ngày đó)
+  function litersOf(f, s) {
+    if (f.liters > 0) return f.liters;
+    const p = f.pricePerL > 0 ? f.pricePerL : priceOn(s, f.date);
+    return p > 0 ? f.amount / p : 0;
+  }
+
+  // ---------- Mức tiêu hao (lít/100km): học từ số LÍT, không phụ thuộc giá xăng ----------
+  function fuelModel(s) {
+    const def = Number(s.settings.fuelL100) || 0;
     // Mốc đo: các lần đổ ĐẦY BÌNH có odo. Xăng tiêu thụ giữa mốc đầu và mốc cuối = mọi lần đổ nằm trong khoảng đó
     // (kể cả lần đổ chưa đầy hoặc không nhớ odo, những lần này xếp theo ngày).
     const full = s.fills
       .filter(f => f.full !== false && f.odo > 0 && f.amount > 0)
       .sort((a, b) => a.odo - b.odo);
     if (full.length >= 2) {
-      const w = full.slice(-6); // tối đa 5 khoảng gần nhất
-      const first = w[0], last = w[w.length - 1];
+      const last = full[full.length - 1];
+      // Lấy tối đa 6 mốc gần nhất; nếu quãng đường còn ngắn (đổ dồn dập) thì lùi thêm tới tối đa 10 mốc để bớt nhiễu
+      let start = Math.max(0, full.length - 6);
+      while (start > 0 && last.odo - full[start].odo < 100 && full.length - start < 10) start--;
+      const first = full[start];
       const dist = last.odo - first.odo;
       if (dist >= 100) {
-        const amt = s.fills.reduce((a, f) => {
+        const liters = s.fills.reduce((a, f) => {
           if (!(f.amount > 0)) return a;
           const inside = f.odo > 0 ? (f.odo > first.odo && f.odo <= last.odo) : (f.date > first.date && f.date <= last.date);
-          return inside ? a + f.amount : a;
+          return inside ? a + litersOf(f, s) : a;
         }, 0);
-        return { rate: amt / dist, source: 'learned', n: w.length - 1, dist, def };
+        return { l100: liters / dist * 100, source: 'learned', n: full.length - start - 1, dist, liters, def };
       }
     }
-    return { rate: def, source: 'default', n: 0, def };
+    return { l100: def, source: 'default', n: 0, def };
   }
 
-  // Nhắc cập nhật giá xăng: chỉ khi app còn dùng giá xăng để ước tính (chưa học được số thật) và giá đã cũ > 7 ngày
+  // Đơn giá xăng/km HIỆN TẠI (để hiển thị): mức tiêu hao × giá xăng hôm nay
+  function fuelRate(s) {
+    const m = fuelModel(s);
+    const price = priceOn(s, todayKey());
+    return Object.assign({}, m, { price, rate: m.l100 / 100 * price });
+  }
+
+  // Nhắc cập nhật giá xăng khi lần ghi giá gần nhất (cập nhật, đổ xăng có giá/lít, hoặc "chưa đổi") đã quá 7 ngày
   function fuelPriceStatus(s) {
-    if (fuelRate(s).source === 'learned') return { show: false };
-    const d = s.settings.fuelPriceDate;
+    const d = latestPriceDate(s);
     const days = d ? Math.floor((Date.now() - keyToDate(d).getTime()) / 864e5) : null;
     return { show: d == null || days > 7, date: d, days };
   }
 
   // ---------- Một ca ----------
-  function shiftCalc(sh, s, curFuelRate) {
+  // model: kết quả fuelModel(s) (truyền vào để khỏi tính lại nhiều lần)
+  function shiftCalc(sh, s, model) {
     // Ca nhập bù có thể chỉ có số km (không có odo)
     const km = sh.km != null ? Math.max(0, sh.km) : Math.max(0, (sh.odoEnd || 0) - (sh.odoStart || 0));
     const hours = Math.max(0, (new Date(sh.end) - new Date(sh.start)) / 3600000);
-    const fr = sh.fuelRate != null ? sh.fuelRate : (curFuelRate != null ? curFuelRate : fuelRate(s).rate);
+    // Xăng của ca = km × lít/100km (mức tiêu hao hiện tốt nhất) × giá xăng của ngày chạy.
+    // Ca cũ chưa có giá xăng riêng (sh.fuelPrice) vẫn giữ đơn giá đ/km đã lưu cho tới khi bạn bấm "Tính lại".
+    let frPerKm;
+    if (sh.fuelPrice != null) frPerKm = (model || fuelModel(s)).l100 / 100 * sh.fuelPrice;
+    else if (sh.fuelRate != null) frPerKm = sh.fuelRate;
+    else frPerKm = (model || fuelModel(s)).l100 / 100 * priceOn(s, dateKey(new Date(sh.start)));
     const wr = sh.wearRate != null ? sh.wearRate : (Number(s.settings.wearPerKm) || 0);
     // Tip/thưởng = số nhập lúc kết thúc ca + các khoản thêm sau (tip qua app, thưởng về sau 24h...)
     const extras = (sh.extras || []).reduce((a, e) => a + (e.amount || 0), 0);
     const net = sh.net || 0, bonus = (sh.bonus || 0) + extras;
     const income = net + bonus;
-    const fuel = km * fr, wear = km * wr;
+    const fuel = km * frPerKm, wear = km * wr;
     const profit = income - fuel - wear;
     return {
       km, hours, net, bonus, income, fuel, wear, profit,
@@ -176,7 +224,7 @@
       km: 0, hours: 0, trips: 0, nShifts: 0, nExpenses: 0, untimedProfit: 0,
       byDay: {}, rideCats: {}, personalCats: {}, savingCats: {},
     };
-    const cur = fuelRate(s).rate;
+    const cur = fuelModel(s);
     s.shifts.forEach(sh => {
       const k = dateKey(new Date(sh.start));
       if (!inR(k)) return;
@@ -248,7 +296,7 @@
       cap: cap.total || 0, income: 0, fuelAccr: 0, wearAccr: 0,
       fuelPaid: 0, repairPaid: 0, repairFromFund: 0, putIn: 0, rideExp: 0, personal: 0, saved: 0, adjust: 0,
     };
-    const cur = fuelRate(s).rate;
+    const cur = fuelModel(s);
     s.shifts.forEach(sh => {
       if (!after(dateKey(new Date(sh.start)))) return;
       const c = shiftCalc(sh, s, cur);
@@ -325,7 +373,7 @@
   const api = {
     DEFAULT_SETTINGS, CATS, TYPE_LABEL, MAINT_ITEMS,
     emptyState, migrate, dateKey, keyToDate, todayKey,
-    lastKnownOdo, fuelRate, fuelPriceStatus, shiftCalc,
+    lastKnownOdo, fuelModel, fuelRate, priceOn, litersOf, fuelPriceStatus, shiftCalc,
     dayRange, weekRange, monthRange, allRange, rangeFor, summarize, series,
     oilStatus, wearSuggestion, lastDayOfPrevMonth, cashPosition,
     fmtInt, fmtKm, fmtMoney, fmtSigned, fmtShort, fmtDur, parseMoney,
