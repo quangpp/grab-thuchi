@@ -32,6 +32,7 @@
       capital: null,     // { date: 'YYYY-MM-DD', total, fund } — vốn ban đầu (không tính là thu nhập)
       checks: [],        // { id,at,wallets,total,expected,diff } — các lần kiểm kê tiền thật
       adjusts: [],       // { id,date,amount,note } — điều chỉnh sau kiểm kê
+      fundPuts: [],      // { id,date,amount } — các lần tách tiền ra để riêng cho quỹ bảo trì
       lastBackup: null,
     };
   }
@@ -39,7 +40,7 @@
   function migrate(o) {
     const s = Object.assign(emptyState(), o || {});
     s.settings = Object.assign({}, DEFAULT_SETTINGS, (o && o.settings) || {});
-    ['shifts', 'fills', 'expenses', 'maint', 'odoLog', 'checks', 'adjusts'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
+    ['shifts', 'fills', 'expenses', 'maint', 'odoLog', 'checks', 'adjusts', 'fundPuts'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
     return s;
   }
 
@@ -245,7 +246,7 @@
     const after = k => k > cap.date;
     const p = {
       cap: cap.total || 0, income: 0, fuelAccr: 0, wearAccr: 0,
-      fuelPaid: 0, repairPaid: 0, rideExp: 0, personal: 0, saved: 0, adjust: 0,
+      fuelPaid: 0, repairPaid: 0, repairFromFund: 0, putIn: 0, rideExp: 0, personal: 0, saved: 0, adjust: 0,
     };
     const cur = fuelRate(s).rate;
     s.shifts.forEach(sh => {
@@ -254,7 +255,12 @@
       p.income += c.income; p.fuelAccr += c.fuel; p.wearAccr += c.wear;
     });
     s.fills.forEach(f => { if (after(f.date)) p.fuelPaid += f.amount; });
-    s.maint.forEach(m => { if (after(m.date)) p.repairPaid += m.cost; });
+    s.maint.forEach(m => {
+      if (!after(m.date)) return;
+      p.repairPaid += m.cost;
+      if (m.fromFund !== false) p.repairFromFund += m.cost; // mặc định trả từ quỹ để riêng
+    });
+    s.fundPuts.forEach(f => { if (after(f.date)) p.putIn += f.amount; });
     s.expenses.forEach(e => {
       if (!after(e.date)) return;
       if (e.type === 'ride') p.rideExp += e.amount;
@@ -265,6 +271,9 @@
     p.expected = p.cap + p.income - p.fuelPaid - p.repairPaid - p.rideExp - p.personal + p.adjust;
     // Quỹ sửa xe: khấu hao trích theo km Grab − tiền bảo dưỡng/sửa xe đã trả (âm = đã chi vượt phần trích)
     p.fund = (cap.fund || 0) + p.wearAccr - p.repairPaid;
+    // Tiền đang tách riêng (bên ngoài) cho quỹ bảo trì, và số cần tách thêm (>0) hoặc đã tách dư (<0)
+    p.envelope = (cap.fund || 0) + p.putIn - p.repairFromFund;
+    p.toSetAside = p.fund - p.envelope;
     p.spendable = p.expected - Math.max(0, p.fund) - p.saved;
     p.commuteFuel = p.fuelPaid - p.fuelAccr; // xăng đi làm + chênh lệch lượng xăng còn trong bình
     return p;

@@ -123,6 +123,9 @@ summary { cursor: pointer; color: var(--accent-d); font-weight: 600; font-size: 
 .tile.in .v { color: var(--accent-d); } .tile.out .v { color: var(--red); }
 .flow .ln { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; font-size: 15px; }
 .flow .ln.sub { padding: 2px 0 2px 16px; font-size: 13.5px; color: var(--muted); }
+.tiles.two { grid-template-columns: 1fr 1fr; margin-top: -6px; }
+.tiles.two .tile .k { font-size: 11px; }
+.flow .ln.mid { border-top: 1px solid var(--line); margin-top: 2px; padding-top: 9px; font-weight: 700; }
 .flow .ln.sum { border-top: 1.5px solid var(--text); margin-top: 4px; padding-top: 10px; font-weight: 800; font-size: 17px; }
 .stack { display: flex; height: 14px; border-radius: 8px; overflow: hidden; background: var(--line); margin: 6px 0 12px; }
 .stack i { display: block; height: 100%; }
