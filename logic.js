@@ -18,6 +18,12 @@
     saving: ['Tiết kiệm', 'Quỹ dự phòng'],
   };
   const TYPE_LABEL = { ride: 'Chạy xe', personal: 'Cá nhân', saving: 'Để dành' };
+  const TX_CATS = {
+    expense: ['Ăn uống', 'Nhà ở', 'Điện nước', 'Internet / điện thoại', 'Đi lại', 'Gia đình', 'Y tế', 'Giáo dục', 'Giải trí', 'Mua sắm', 'Bảo hiểm', 'Khác'],
+    income: ['Lương', 'Thưởng lớn', 'Freelance', 'Hoàn tiền', 'Khác'],
+  };
+  const ACCT_KINDS = { cash: 'Tiền mặt', bank: 'Ngân hàng', wallet: 'Ví điện tử', other: 'Khác' };
+  const GRAB_ACCT = 'grab'; // tài khoản ảo "Tiền Grab": số dư lấy từ mục Grab (tab Tiền Grab)
   const MAINT_ITEMS = ['Nhớt', 'Lốp', 'Má phanh', 'Sên nhông dĩa', 'Bugi / lọc gió', 'Nước mát', 'Khác'];
 
   function emptyState() {
@@ -35,6 +41,10 @@
       adjusts: [],       // { id,date,amount,note } — điều chỉnh sau kiểm kê
       fundPuts: [],      // { id,date,amount } — các lần tách tiền ra để riêng cho quỹ bảo trì
       priceLog: [],      // { id,date,price } — các lần cập nhật giá xăng thủ công (giá/lít)
+      // Sổ tài chính cá nhân
+      ledger: { start: null, lastAcct: null }, // start = ngày chốt (số dư đầu kỳ tính tới hết ngày này)
+      accounts: [],      // { id,name,kind,opening } — kind: cash | bank | wallet | other
+      tx: [],            // { id,date,type:'income'|'expense'|'transfer',amount,acct,to,cat,note,adj }
       lastBackup: null,
     };
   }
@@ -42,7 +52,8 @@
   function migrate(o) {
     const s = Object.assign(emptyState(), o || {});
     s.settings = Object.assign({}, DEFAULT_SETTINGS, (o && o.settings) || {});
-    ['shifts', 'fills', 'expenses', 'maint', 'odoLog', 'checks', 'adjusts', 'fundPuts', 'priceLog'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
+    ['shifts', 'fills', 'expenses', 'maint', 'odoLog', 'checks', 'adjusts', 'fundPuts', 'priceLog', 'accounts', 'tx'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
+    if (!s.ledger || typeof s.ledger !== 'object') s.ledger = { start: null, lastAcct: null };
     // Dữ liệu cũ: giá xăng đã xác nhận trước đây trở thành mốc đầu tiên của nhật ký giá
     if (!s.priceLog.length && s.settings.fuelPriceDate && s.settings.fuelPrice > 0) {
       s.priceLog.push({ id: 'seed', date: s.settings.fuelPriceDate, price: s.settings.fuelPrice });
@@ -317,7 +328,18 @@
       else p.saved += e.amount;
     });
     s.adjusts.forEach(a => { p.adjust += a.amount; });
-    p.expected = p.cap + p.income - p.fuelPaid - p.repairPaid - p.rideExp - p.personal + p.adjust;
+    // Giao dịch ở sổ tài chính có dính "Tiền Grab" (chi từ tiền Grab, rút về ngân hàng, nạp thêm...)
+    p.ledgerNet = 0;
+    s.tx.forEach(t => {
+      if (!after(t.date)) return;
+      if (t.type === 'income' && t.acct === GRAB_ACCT) p.ledgerNet += t.amount;
+      else if (t.type === 'expense' && t.acct === GRAB_ACCT) p.ledgerNet -= t.amount;
+      else if (t.type === 'transfer') {
+        if (t.acct === GRAB_ACCT) p.ledgerNet -= t.amount;
+        if (t.to === GRAB_ACCT) p.ledgerNet += t.amount;
+      }
+    });
+    p.expected = p.cap + p.income - p.fuelPaid - p.repairPaid - p.rideExp - p.personal + p.adjust + p.ledgerNet;
     // Quỹ sửa xe: khấu hao trích theo km Grab − tiền bảo dưỡng/sửa xe đã trả (âm = đã chi vượt phần trích)
     p.fund = (cap.fund || 0) + p.wearAccr - p.repairPaid;
     // Tiền đang tách riêng (bên ngoài) cho quỹ bảo trì, và số cần tách thêm (>0) hoặc đã tách dư (<0)
@@ -326,6 +348,68 @@
     p.spendable = p.expected - Math.max(0, p.fund) - p.saved;
     p.commuteFuel = p.fuelPaid - p.fuelAccr; // xăng đi làm + chênh lệch lượng xăng còn trong bình
     return p;
+  }
+
+  // ---------- Sổ tài chính: tài khoản, số dư, giao dịch ----------
+  function ledgerReady(s) { return !!(s.ledger && s.ledger.start); }
+
+  // Số dư từng tài khoản = số dư đầu kỳ + giao dịch sau ngày chốt. "Tiền Grab" là tài khoản ảo lấy từ mục Grab.
+  function accountBalances(s) {
+    const start = s.ledger && s.ledger.start;
+    const byId = {};
+    s.accounts.forEach(a => { byId[a.id] = Number(a.opening) || 0; });
+    s.tx.forEach(t => {
+      if (start && t.date <= start) return;
+      if (t.type === 'income') { if (t.acct in byId) byId[t.acct] += t.amount; }
+      else if (t.type === 'expense') { if (t.acct in byId) byId[t.acct] -= t.amount; }
+      else if (t.type === 'transfer') {
+        if (t.acct in byId) byId[t.acct] -= t.amount;
+        if (t.to in byId) byId[t.to] += t.amount;
+      }
+    });
+    const pos = cashPosition(s);
+    const grab = pos ? pos.expected : null;
+    const total = Object.keys(byId).reduce((a, k) => a + byId[k], 0) + (grab || 0);
+    return { byId, grab, total };
+  }
+
+  // Gộp giao dịch của sổ và các dòng tiền từ mục Grab (thu nhập ca, xăng đổ thật, bảo dưỡng, chi khác) thành một danh sách
+  function unifiedEntries(s, from, to) {
+    const out = [];
+    const inR = k => k >= from && k <= to;
+    s.tx.forEach(t => {
+      if (inR(t.date)) out.push({ src: 'tx', id: t.id, date: t.date, type: t.type, amount: t.amount, cat: t.cat || '', note: t.note || '', acct: t.acct, to: t.to, adj: !!t.adj });
+    });
+    const model = fuelModel(s);
+    s.shifts.forEach(sh => {
+      const k = dateKey(new Date(sh.start));
+      if (!inR(k)) return;
+      const c = shiftCalc(sh, s, model);
+      out.push({ src: 'shift', id: sh.id, date: k, type: 'income', amount: c.income, cat: 'Grab · thu nhập ca', note: '', acct: GRAB_ACCT, at: sh.start });
+    });
+    s.fills.forEach(f => { if (inR(f.date)) out.push({ src: 'fill', id: f.id, date: f.date, type: 'expense', amount: f.amount, cat: 'Grab · Xăng', note: '', acct: GRAB_ACCT }); });
+    s.maint.forEach(m => { if (inR(m.date)) out.push({ src: 'maint', id: m.id, date: m.date, type: 'expense', amount: m.cost, cat: 'Grab · Bảo dưỡng xe', note: m.item, acct: GRAB_ACCT }); });
+    s.expenses.forEach(e => {
+      if (!inR(e.date) || e.type === 'saving') return;
+      out.push({
+        src: 'exp', id: e.id, date: e.date, type: 'expense', amount: e.amount, note: e.note || '', acct: GRAB_ACCT,
+        cat: e.type === 'ride' ? 'Grab · ' + e.category : e.category,
+      });
+    });
+    return out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  }
+
+  // Báo cáo thu/chi theo danh mục trong khoảng ngày. Chuyển khoản và điều chỉnh số dư không tính là thu/chi.
+  function periodReport(s, from, to) {
+    const r = { income: 0, expense: 0, incomeCats: {}, expenseCats: {}, transfers: 0 };
+    unifiedEntries(s, from, to).forEach(e => {
+      if (e.type === 'transfer') { r.transfers += e.amount; return; }
+      if (e.adj) return;
+      if (e.type === 'income') { r.income += e.amount; addTo(r.incomeCats, e.cat || 'Khác', e.amount); }
+      else { r.expense += e.amount; addTo(r.expenseCats, e.cat || 'Khác', e.amount); }
+    });
+    r.net = r.income - r.expense;
+    return r;
   }
 
   // ---------- Định dạng ----------
@@ -372,7 +456,8 @@
   }
 
   const api = {
-    DEFAULT_SETTINGS, CATS, TYPE_LABEL, MAINT_ITEMS,
+    DEFAULT_SETTINGS, CATS, TYPE_LABEL, MAINT_ITEMS, TX_CATS, ACCT_KINDS, GRAB_ACCT,
+    ledgerReady, accountBalances, unifiedEntries, periodReport,
     emptyState, migrate, dateKey, keyToDate, todayKey,
     lastKnownOdo, fuelModel, fuelRate, priceOn, litersOf, fuelPriceStatus, shiftCalc,
     dayRange, weekRange, monthRange, allRange, rangeFor, summarize, series,

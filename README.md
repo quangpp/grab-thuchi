@@ -1,6 +1,6 @@
-# Sổ Thu Chi Grab
+# Sổ Tài Chính
 
-Web app (PWA) cá nhân để ghi ca chạy Grab, chi phí và tính lãi/km, lãi/giờ. Dữ liệu lưu ngay trên điện thoại (localStorage), không gửi đi đâu.
+Web app (PWA) quản lý tài chính cá nhân: tài khoản (ví, ngân hàng), giao dịch thu/chi/chuyển, báo cáo theo tháng và danh mục; kèm mục **Grab** (ca chạy, lãi/km, xe, quỹ bảo trì) tự liên thông vào sổ. Dữ liệu lưu ngay trên điện thoại (localStorage), không gửi đi đâu.
 
 ## Chạy thử trên máy tính
 
@@ -29,6 +29,6 @@ Cài đặt → **Xuất file**, lưu vào Files/iCloud. Nên làm mỗi tuần.
 ## Cấu trúc
 
 - `vault.js` — mã hoá/giải mã bằng mật khẩu (WebCrypto)
-- `logic.js` — toàn bộ phép tính (xăng/km học từ lần đổ xăng, hao mòn, lãi ca, tổng hợp tuần/tháng)
+- `logic.js` — toàn bộ phép tính (sổ tài chính, Grab) (xăng/km học từ lần đổ xăng, hao mòn, lãi ca, tổng hợp tuần/tháng)
 - `app.js`, `styles.css`, `index.html` — giao diện
 - `sw.js`, `manifest.webmanifest`, `icons/` — cài lên màn hình chính, chạy offline

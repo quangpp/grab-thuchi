@@ -1,7 +1,7 @@
 {
-  "name": "Sổ Thu Chi Grab",
-  "short_name": "Thu chi Grab",
-  "description": "Quản lý thu chi và lãi/km khi chạy Grab",
+  "name": "Sổ Tài Chính",
+  "short_name": "Sổ Tài Chính",
+  "description": "Quản lý tài chính cá nhân: lương, chi tiêu, tài khoản, nợ, kèm sổ chạy Grab",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
