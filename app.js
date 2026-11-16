@@ -12,7 +12,7 @@
   // Trạng thái khoá: khi đã đặt mật khẩu, khoá giải mã chỉ nằm trong bộ nhớ lúc đang mở khoá
   let vaultKey = null, vaultHeader = null, locked = false;
   let saveChain = Promise.resolve();
-  let hiddenAt = 0, failCount = 0, lockedUntil = 0, pendingImport = null;
+  let hiddenAt = 0, failCount = 0, lockedUntil = 0, pendingImport = null, pendingData = null;
 
   let S = load();
   let tab = 'overview';
@@ -762,7 +762,7 @@
     }
     const b = L.accountBalances(S);
     const list = S.accounts.map(a => `<button class="row" data-act="edit-account" data-id="${a.id}"><div class="l"><b>${esc(a.name)}</b><span class="muted">${L.ACCT_KINDS[a.kind] || 'Khác'}</span></div><div class="amt ${b.byId[a.id] < 0 ? 'neg' : ''}">${fmtMoney(b.byId[a.id])}</div></button>`).join('');
-    const grabRow = `<button class="row" data-act="goto-pot"><div class="l"><b>Tiền Grab</b><span class="muted">${b.grab == null ? 'Chưa thiết lập vốn Grab (mục Grab → Tiền Grab)' : 'Lấy từ mục Grab, bấm để xem chi tiết'}</span></div><div class="amt">${b.grab == null ? '—' : fmtMoney(b.grab)}</div></button>`;
+    const grabRow = `<button class="row" data-act="goto-pot"><div class="l"><b>Tiền Grab</b><span class="muted">${b.grab == null ? 'Chưa có dữ liệu Grab nào' : b.grabImplicit ? 'Chưa nhập vốn Grab: đang tính từ 0 kể từ bản ghi Grab đầu tiên. Bấm để nhập vốn.' : 'Lấy từ mục Grab, bấm để xem chi tiết'}</span></div><div class="amt">${b.grab == null ? '—' : fmtMoney(b.grab)}</div></button>`;
     return `<section class="card"><div class="eyebrow">Tổng tài sản</div><div class="big ${b.total < 0 ? 'neg' : ''}">${fmtMoney(b.total)}</div>
         <div class="muted small">Sổ bắt đầu từ ngày ${dmOf(S.ledger.start)}, chạy tiếp lâu dài.</div>
         <button class="btn primary lg" data-act="add-account">＋ Thêm tài khoản</button></section>
@@ -796,7 +796,7 @@
   }
 
   // ---- Sheet: giao dịch (Chi / Thu / Chuyển)
-  const acctOptions = () => S.accounts.map(a => ({ id: a.id, name: a.name })).concat(L.cashPosition(S) ? [{ id: GRAB, name: 'Tiền Grab' }] : []);
+  const acctOptions = () => S.accounts.map(a => ({ id: a.id, name: a.name })).concat(L.grabPot(S) ? [{ id: GRAB, name: 'Tiền Grab' }] : []);
   const defaultAcct = () => { const o = acctOptions(); return (o.find(x => x.id === S.ledger.lastAcct) || o[0] || {}).id || ''; };
   function acctChips(role, selected) {
     return `<div class="chips" id="ch-${role}">${acctOptions().map(o => `<button type="button" class="chip ${o.id === selected ? 'on' : ''}" data-act="pick-acct" data-role="${role}" data-id="${o.id}">${esc(o.name)}</button>`).join('')}</div><input type="hidden" id="f-${role}" value="${esc(selected || '')}">`;
@@ -1176,8 +1176,7 @@
       S.ledger.lastAcct = acct;
     }
     // Tiền Grab có mốc riêng (ngày chốt vốn Grab): giao dịch dính Tiền Grab phải sau mốc đó mới tính được
-    const pos = L.cashPosition(S);
-    if (pos && date > S.ledger.start && date <= S.capital.date && (rec.acct === GRAB || rec.to === GRAB)) {
+    if (S.capital && date > S.ledger.start && date <= S.capital.date && (rec.acct === GRAB || rec.to === GRAB)) {
       return setErr(`Giao dịch dùng "Tiền Grab" phải sau ngày chốt vốn Grab (${dmOf(S.capital.date)}).`);
     }
     if (el.dataset.id) { const t = S.tx.find(x => x.id === el.dataset.id); Object.assign(t, rec); if (type !== 'transfer') delete t.to; }
@@ -1404,6 +1403,23 @@
     } catch (e) { el.disabled = false; el.textContent = 'Mở file'; setErr('Mật khẩu của file sao lưu không đúng.'); }
   };
 
+  // Nhập file: gộp hoặc thay thế
+  A['import-merge'] = () => {
+    if (!pendingData) return;
+    const r = L.mergeState(S, pendingData);
+    pendingData = null; S = r.state; save(); closeSheet(); render(true);
+    const a = r.added, parts = [['shifts', 'ca'], ['tx', 'giao dịch'], ['accounts', 'tài khoản'], ['fills', 'lần đổ xăng'], ['expenses', 'khoản chi'], ['maint', 'bảo dưỡng']]
+      .filter(p => a[p[0]]).map(p => a[p[0]] + ' ' + p[1]);
+    toast(parts.length ? 'Đã gộp thêm: ' + parts.join(', ') : 'Không có mục mới để gộp');
+  };
+  A['import-replace'] = () => {
+    if (!pendingData) return;
+    const hadLedger = S.accounts.length || S.tx.length;
+    const fileHas = (pendingData.accounts || []).length || (pendingData.tx || []).length;
+    if (hadLedger && !fileHas && !confirm(`File này không có sổ tài chính. Thay thế sẽ XOÁ ${S.accounts.length} tài khoản và ${S.tx.length} giao dịch hiện có. Vẫn thay thế?`)) return;
+    S = L.migrate(pendingData); pendingData = null; save(); closeSheet(); render(true); toast('Đã thay thế dữ liệu');
+  };
+
   // Sao lưu
   A['export-plain'] = () => {
     if (confirm('File không mã hoá chứa toàn bộ số liệu của bạn, ai có file đều đọc được. Vẫn xuất?')) doExport(true);
@@ -1439,8 +1455,16 @@
   // Áp dụng dữ liệu nhập từ file (đã giải mã nếu cần)
   function applyImport(o) {
     if (!o || typeof o !== 'object' || !o.settings || !Array.isArray(o.shifts)) { toast('File không đúng định dạng'); return; }
-    if (!confirm(`Nhập file này sẽ THAY THẾ dữ liệu hiện tại.\nFile có ${o.shifts.length} ca, ${(o.expenses || []).length} khoản chi. Tiếp tục?`)) return;
-    S = L.migrate(o); save(); render(true); toast('Đã nhập dữ liệu');
+    pendingData = o;
+    const n = (x, k) => (Array.isArray(x[k]) ? x[k].length : 0);
+    const line = (x, who) => `<div class="kv"><span>${who}</span><b>${n(x, 'shifts')} ca · ${n(x, 'tx')} giao dịch · ${n(x, 'accounts')} tài khoản</b></div>`;
+    const lose = S.accounts.length || S.tx.length;
+    openSheet('Nhập dữ liệu từ file', `
+      ${line(o, 'Trong file')}${line(S, 'Đang có trên máy')}
+      <button class="btn primary lg" data-act="import-merge">Gộp vào dữ liệu hiện tại</button>
+      <p class="hint" style="margin:6px 0 14px">Khuyến nghị. Giữ nguyên tài khoản, giao dịch và cài đặt hiện có; chỉ thêm các ca chạy, xăng, chi phí... chưa có (mục trùng sẽ bỏ qua).</p>
+      <button class="btn danger" data-act="import-replace">Thay thế toàn bộ</button>
+      <p class="hint" style="margin:6px 0 0">Xoá hết dữ liệu đang có và dùng đúng nội dung file.${lose ? ` <b>Sổ tài chính hiện tại (${S.accounts.length} tài khoản, ${S.tx.length} giao dịch) sẽ mất nếu file không có.</b>` : ''}</p>`);
   }
 
   // ---------------------------------------------------------------- sự kiện

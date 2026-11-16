@@ -354,6 +354,42 @@
   // ---------- Sổ tài chính: tài khoản, số dư, giao dịch ----------
   function ledgerReady(s) { return !!(s.ledger && s.ledger.start); }
 
+  // "Tiền Grab" khi CHƯA nhập vốn Grab: coi như vốn 0 tại ngày trước bản ghi Grab đầu tiên (ca, xăng, bảo dưỡng, chi phí,
+  // giao dịch dính Tiền Grab), để thu nhập Grab đã nhập vẫn được cộng vào tổng tài sản.
+  function implicitCapital(s) {
+    const keys = [];
+    s.shifts.forEach(x => keys.push(dateKey(new Date(x.start))));
+    s.fills.forEach(x => keys.push(x.date));
+    s.maint.forEach(x => keys.push(x.date));
+    s.expenses.forEach(x => keys.push(x.date));
+    s.tx.forEach(t => { if (t.acct === GRAB_ACCT || t.to === GRAB_ACCT) keys.push(t.date); });
+    if (!keys.length) return null;
+    keys.sort();
+    const d = keyToDate(keys[0]); d.setDate(d.getDate() - 1);
+    return { date: dateKey(d), total: 0, fund: 0 };
+  }
+  // Số liệu "Tiền Grab": dùng vốn thật nếu đã nhập, không thì vốn ngầm định ở trên (null nếu chưa có dữ liệu Grab nào)
+  function grabPot(s) {
+    if (s.capital) return cashPosition(s);
+    const cap = implicitCapital(s);
+    return cap ? cashPosition(Object.assign({}, s, { capital: cap })) : null;
+  }
+
+  // Gộp dữ liệu từ file vào dữ liệu hiện tại: giữ nguyên mọi thứ đang có, chỉ thêm các mục chưa có (theo id)
+  const MERGE_KEYS = ['shifts', 'fills', 'expenses', 'maint', 'odoLog', 'checks', 'adjusts', 'fundPuts', 'priceLog', 'accounts', 'tx'];
+  function mergeState(cur, inc) {
+    const a = migrate(JSON.parse(JSON.stringify(cur))), b = migrate(JSON.parse(JSON.stringify(inc)));
+    const added = {};
+    MERGE_KEYS.forEach(k => {
+      const ids = new Set(a[k].map(x => x.id));
+      added[k] = 0;
+      b[k].forEach(x => { if (!ids.has(x.id)) { a[k].push(x); added[k]++; } });
+    });
+    if (!a.capital && b.capital) a.capital = b.capital;
+    if (!(a.ledger && a.ledger.start) && b.ledger && b.ledger.start) a.ledger = b.ledger;
+    return { state: a, added };
+  }
+
   // Số dư từng tài khoản = số dư đầu kỳ + giao dịch sau ngày chốt. "Tiền Grab" là tài khoản ảo lấy từ mục Grab.
   function accountBalances(s) {
     const start = s.ledger && s.ledger.start;
@@ -368,10 +404,10 @@
         if (t.to in byId) byId[t.to] += t.amount;
       }
     });
-    const pos = cashPosition(s);
+    const pos = grabPot(s);
     const grab = pos ? pos.expected : null;
     const total = Object.keys(byId).reduce((a, k) => a + byId[k], 0) + (grab || 0);
-    return { byId, grab, total };
+    return { byId, grab, total, grabImplicit: !s.capital && grab != null };
   }
 
   // Gộp giao dịch của sổ và các dòng tiền từ mục Grab (thu nhập ca, xăng đổ thật, bảo dưỡng, chi khác) thành một danh sách
@@ -458,7 +494,7 @@
 
   const api = {
     DEFAULT_SETTINGS, CATS, TYPE_LABEL, MAINT_ITEMS, TX_CATS, ACCT_KINDS, GRAB_ACCT,
-    ledgerReady, accountBalances, unifiedEntries, periodReport,
+    ledgerReady, accountBalances, unifiedEntries, periodReport, grabPot, mergeState,
     emptyState, migrate, dateKey, keyToDate, todayKey,
     lastKnownOdo, fuelModel, fuelRate, priceOn, litersOf, fuelPriceStatus, shiftCalc,
     dayRange, weekRange, monthRange, allRange, rangeFor, summarize, series,
