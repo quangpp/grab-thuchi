@@ -368,6 +368,17 @@
     const d = keyToDate(keys[0]); d.setDate(d.getDate() - 1);
     return { date: dateKey(d), total: 0, fund: 0 };
   }
+  // Các ca đã nhập nhưng nằm từ ngày chốt vốn Grab trở về trước: không được cộng vào Tiền Grab (đã coi là nằm trong vốn)
+  function grabExcluded(s) {
+    const cap = s.capital;
+    const r = { n: 0, income: 0, date: cap ? cap.date : null };
+    if (!cap) return r;
+    const model = fuelModel(s);
+    s.shifts.forEach(sh => {
+      if (dateKey(new Date(sh.start)) <= cap.date) { r.n++; r.income += shiftCalc(sh, s, model).income; }
+    });
+    return r;
+  }
   // Số liệu "Tiền Grab": dùng vốn thật nếu đã nhập, không thì vốn ngầm định ở trên (null nếu chưa có dữ liệu Grab nào)
   function grabPot(s) {
     if (s.capital) return cashPosition(s);
@@ -494,7 +505,7 @@
 
   const api = {
     DEFAULT_SETTINGS, CATS, TYPE_LABEL, MAINT_ITEMS, TX_CATS, ACCT_KINDS, GRAB_ACCT,
-    ledgerReady, accountBalances, unifiedEntries, periodReport, grabPot, mergeState,
+    ledgerReady, accountBalances, unifiedEntries, periodReport, grabPot, grabExcluded, implicitCapital, mergeState,
     emptyState, migrate, dateKey, keyToDate, todayKey,
     lastKnownOdo, fuelModel, fuelRate, priceOn, litersOf, fuelPriceStatus, shiftCalc,
     dayRange, weekRange, monthRange, allRange, rangeFor, summarize, series,

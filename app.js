@@ -305,17 +305,23 @@
   const WALLETS = [['cash', 'Tiền mặt đang cầm'], ['income', 'Ví thu nhập Grab'], ['topup', 'Ví nạp Grab'], ['bank', 'Tài khoản ngân hàng'], ['fund', 'Quỹ bảo trì để riêng']];
 
   function cashCards() {
-    const p = L.cashPosition(S);
+    const p = L.grabPot(S);                              // chạy được cả khi chưa nhập vốn (coi vốn = 0)
+    const cap = S.capital || L.implicitCapital(S) || {};
+    const implicit = !S.capital;
     if (!p) {
       return `<section class="card"><div class="eyebrow">Tiền Grab đang cầm</div>
         <h2 style="margin-top:6px">Thiết lập vốn ban đầu</h2>
         <p class="muted small" style="margin:0 0 4px">Nhập một lần số tiền bạn đang có từ trước (ví dụ lợi nhuận tháng vừa rồi). Số này <b>không tính là thu nhập</b>, chỉ là mốc để app đối soát với tiền thật.</p>
         <button class="btn primary lg" data-act="set-capital">Nhập vốn ban đầu</button></section>`;
     }
-    const cd = S.capital.date.slice(8) + '/' + S.capital.date.slice(5, 7);
+    const cd = cap.date.slice(8) + '/' + cap.date.slice(5, 7);
     const last = sortedDesc(S.checks, c => c.at).slice(0, 3);
-    return `<section class="card flow"><div class="eyebrow">Tiền Grab đang cầm (theo app)</div>
-        <div class="ln" style="margin-top:6px"><span>Vốn ban đầu <span class="muted small">(chốt ${cd})</span></span><span>${fmtMoney(p.cap)}</span></div>
+    const ex = L.grabExcluded(S);
+    const warn = implicit
+      ? `<div class="alert"><div>ℹ️ <b>Bạn chưa nhập vốn ban đầu</b> nên app tính Tiền Grab từ 0 kể từ ${cd}, mọi ca đã nhập đều được cộng. Nếu bạn có sẵn một số tiền Grab từ trước, bấm "Nhập vốn" bên dưới.</div></div>`
+      : ex.n ? `<div class="alert bad"><div>⚠️ <b>${ex.n} ca (thu ${fmtMoney(ex.income)}) không được cộng</b> vì nằm từ ngày chốt vốn (${cd}) trở về trước: app coi chúng đã nằm trong vốn. Nếu chưa tính vào vốn, hãy lùi ngày chốt vốn lên sớm hơn ca đầu tiên, hoặc xoá vốn để tính từ 0.</div><button class="btn sm" data-act="set-capital">Sửa vốn</button></div>` : '';
+    return `${warn}<section class="card flow"><div class="eyebrow">Tiền Grab đang cầm (theo app)</div>
+        <div class="ln" style="margin-top:6px"><span>Vốn ban đầu <span class="muted small">(${implicit ? 'chưa nhập, tính từ 0' : 'chốt ' + cd})</span></span><span>${fmtMoney(p.cap)}</span></div>
         <div class="ln"><span>+ Thu nhập các ca <span class="muted small">(thu ròng + tip)</span></span><span>${fmtMoney(p.income)}</span></div>
         <div class="ln"><span>− Xăng đã đổ</span><span>${fmtMoney(p.fuelPaid)}</span></div>
         ${p.fuelPaid > 0 ? `<div class="ln sub"><span>trong đó xăng đi làm / chênh tồn bình</span><span>${fmtMoney(p.commuteFuel)}</span></div>` : ''}
@@ -326,7 +332,7 @@
         <div class="ln sum"><span>Tiền đang cầm</span><span>${fmtMoney(p.expected)}</span></div>
       </section>
       <section class="card flow"><div class="eyebrow">Quỹ bảo trì (hao mòn xe)</div>
-        <div class="ln" style="margin-top:6px"><span>Đã trích <span class="muted small">(km Grab × ${fmtInt(S.settings.wearPerKm)}đ${S.capital.fund ? ', gồm quỹ đầu ' + fmtMoney(S.capital.fund) : ''})</span></span><span>${fmtMoney((S.capital.fund || 0) + p.wearAccr)}</span></div>
+        <div class="ln" style="margin-top:6px"><span>Đã trích <span class="muted small">(km Grab × ${fmtInt(S.settings.wearPerKm)}đ${cap.fund ? ', gồm quỹ đầu ' + fmtMoney(cap.fund) : ''})</span></span><span>${fmtMoney((cap.fund || 0) + p.wearAccr)}</span></div>
         <div class="ln"><span>− Đã trả bảo dưỡng, sửa xe</span><span>${fmtMoney(p.repairPaid)}</span></div>
         <div class="ln sum"><span>Cần có trong quỹ</span><span class="${p.fund < 0 ? 'neg' : ''}">${fmtMoney(p.fund)}</span></div>
         <div class="ln"><span>Đang tách riêng <span class="muted small">(bên ngoài)</span></span><span>${fmtMoney(p.envelope)}</span></div>
@@ -343,7 +349,7 @@
         <div class="kv" style="margin-top:6px"><span>🔧 Quỹ bảo trì (cần giữ)</span><b>${fmtMoney(Math.max(0, p.fund))}</b></div>
         <div class="kv"><span>🏦 Để dành</span><b>${fmtMoney(p.saved)}</b></div>
         <div class="kv" style="border-top:1.5px solid var(--text);margin-top:6px;padding-top:10px"><span style="color:var(--text);font-weight:700">✅ Tiền tiêu được</span><b class="${sgn(p.spendable)}" style="font-size:18px">${fmtMoney(p.spendable)}</b></div>
-        <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-act="check-money">Kiểm kê tiền thật</button><button class="btn" data-act="set-capital">Sửa vốn đầu</button></div>
+        <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-act="check-money">Kiểm kê tiền thật</button><button class="btn" data-act="set-capital">${implicit ? 'Nhập vốn' : 'Sửa vốn đầu'}</button></div>
         ${last.length ? `<div class="group-h" style="padding-left:0;margin-top:8px">Các lần kiểm kê gần đây</div>${last.map(c => `<div class="kv"><span>${fmtDM(c.at)} ${fmtTime(c.at)} · thực tế ${fmtMoney(c.total)}</span><b class="${c.diff === 0 ? 'pos' : sgn(c.diff)}">${c.diff === 0 ? 'khớp' : fmtSigned(c.diff)}</b></div>`).join('')}` : ''}
       </section>`;
   }
@@ -375,7 +381,7 @@
        <div class="hint">${d > 0 ? 'Thực tế nhiều hơn app: có thể quên ghi một khoản thu/tip, hoặc ghi dư một khoản chi.' : d < 0 ? 'Thực tế ít hơn app: có thể quên ghi một khoản chi (xăng, ăn uống...) hoặc ghi dư thu nhập.' : 'Số liệu khớp với tiền thật.'}</div>`);
   }
   function checkSheet() {
-    const p = L.cashPosition(S);
+    const p = L.grabPot(S);
     if (!p) { toast('Hãy nhập vốn ban đầu trước'); return; }
     openSheet('Kiểm kê tiền thật', `
       <p class="muted small" style="margin:0 0 12px">Nhập số dư thật ở từng nơi đang giữ tiền Grab (bỏ trống nếu không có).</p>
@@ -762,7 +768,7 @@
     }
     const b = L.accountBalances(S);
     const list = S.accounts.map(a => `<button class="row" data-act="edit-account" data-id="${a.id}"><div class="l"><b>${esc(a.name)}</b><span class="muted">${L.ACCT_KINDS[a.kind] || 'Khác'}</span></div><div class="amt ${b.byId[a.id] < 0 ? 'neg' : ''}">${fmtMoney(b.byId[a.id])}</div></button>`).join('');
-    const grabRow = `<button class="row" data-act="goto-pot"><div class="l"><b>Tiền Grab</b><span class="muted">${b.grab == null ? 'Chưa có dữ liệu Grab nào' : b.grabImplicit ? 'Chưa nhập vốn Grab: đang tính từ 0 kể từ bản ghi Grab đầu tiên. Bấm để nhập vốn.' : 'Lấy từ mục Grab, bấm để xem chi tiết'}</span></div><div class="amt">${b.grab == null ? '—' : fmtMoney(b.grab)}</div></button>`;
+    const grabRow = `<button class="row" data-act="goto-pot"><div class="l"><b>Tiền Grab</b><span class="muted">${b.grab == null ? 'Chưa có dữ liệu Grab nào' : b.grabImplicit ? 'Chưa nhập vốn Grab: đang tính từ 0 kể từ bản ghi Grab đầu tiên. Bấm để nhập vốn.' : L.grabExcluded(S).n ? `⚠️ ${L.grabExcluded(S).n} ca nằm từ ngày chốt vốn Grab trở về trước nên chưa được cộng. Bấm để xem.` : 'Lấy từ mục Grab, bấm để xem chi tiết'}</span></div><div class="amt">${b.grab == null ? '—' : fmtMoney(b.grab)}</div></button>`;
     return `<section class="card"><div class="eyebrow">Tổng tài sản</div><div class="big ${b.total < 0 ? 'neg' : ''}">${fmtMoney(b.total)}</div>
         <div class="muted small">Sổ bắt đầu từ ngày ${dmOf(S.ledger.start)}, chạy tiếp lâu dài.</div>
         <button class="btn primary lg" data-act="add-account">＋ Thêm tài khoản</button></section>
@@ -1220,7 +1226,7 @@
 
   // Quỹ bảo trì: ghi lần tách tiền ra để riêng (chuyển tiền, không phải khoản chi)
   A['put-fund'] = () => {
-    const p = L.cashPosition(S);
+    const p = L.grabPot(S);
     const sug = p ? Math.max(0, Math.round(p.toSetAside)) : '';
     openSheet('Đã tách tiền vào quỹ bảo trì', `
       ${moneyField('f-amt', 'Số tiền đã tách riêng', sug || '', { focus: true, hint: 'Gợi ý là số cần tách thêm. Đây chỉ là chuyển tiền sang chỗ để riêng, không phải khoản chi.' })}
@@ -1250,13 +1256,13 @@
     save(); closeSheet(); render(); toast('Đã lưu vốn ban đầu');
   };
   A['del-capital'] = () => {
-    if (!confirm('Xoá vốn ban đầu? Các lần kiểm kê và điều chỉnh cũng sẽ bị xoá.')) return;
+    if (!confirm('Xoá vốn ban đầu? Tiền Grab sẽ tính lại từ 0 kể từ bản ghi Grab đầu tiên (mọi ca đã nhập đều được cộng). Các lần kiểm kê và điều chỉnh gắn với vốn cũng sẽ bị xoá.')) return;
     S.capital = null; S.checks = []; S.adjusts = [];
     save(); closeSheet(); render(); toast('Đã xoá');
   };
   A['check-money'] = () => checkSheet();
   A['save-check'] = el => {
-    const p = L.cashPosition(S), total = checkTotal();
+    const p = L.grabPot(S), total = checkTotal();
     if (total == null) return setErr('Nhập ít nhất một số dư.');
     const wallets = {};
     WALLETS.forEach(w => { const v = getInt('f-w-' + w[0]); wallets[w[0]] = isNaN(v) ? 0 : v; });
