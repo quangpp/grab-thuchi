@@ -2,9 +2,16 @@
 (function () {
   'use strict';
   const L = window.Logic;
-  const KEY = 'grab-tracker-v1';
+  const V = window.Vault;
+  const KEY = 'grab-tracker-v1';          // dữ liệu thô (khi chưa đặt mật khẩu)
+  const KEY_ENC = 'grab-tracker-enc-v1';  // dữ liệu đã mã hoá (khi đã đặt mật khẩu)
   const DAYS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
   const TITLES = { overview: 'Tổng quan', shift: 'Ca chạy', spend: 'Tiền', car: 'Xe', settings: 'Cài đặt' };
+
+  // Trạng thái khoá: khi đã đặt mật khẩu, khoá giải mã chỉ nằm trong bộ nhớ lúc đang mở khoá
+  let vaultKey = null, vaultHeader = null, locked = false;
+  let saveChain = Promise.resolve();
+  let hiddenAt = 0, failCount = 0, lockedUntil = 0, pendingImport = null;
 
   let S = load();
   let tab = 'shift';
@@ -14,12 +21,23 @@
   // ---------------------------------------------------------------- lưu trữ
   function load() {
     try {
+      if (localStorage.getItem(KEY_ENC)) { locked = true; return L.emptyState(); } // có mật khẩu: chưa đọc dữ liệu, chờ mở khoá
       const raw = localStorage.getItem(KEY);
       if (raw) return L.migrate(JSON.parse(raw));
     } catch (e) { /* dùng dữ liệu rỗng */ }
     return L.emptyState();
   }
   function save() {
+    if (locked) return false; // đang khoá: tuyệt đối không ghi gì
+    if (vaultKey) {
+      // Có mật khẩu: mã hoá rồi mới ghi (xếp hàng để các lần lưu không đè nhau)
+      const key = vaultKey, header = vaultHeader, text = JSON.stringify(S);
+      saveChain = saveChain
+        .then(() => V.encryptText(key, text))
+        .then(rec => { localStorage.setItem(KEY_ENC, JSON.stringify(Object.assign({}, header, rec))); })
+        .catch(() => toast('⚠️ Không lưu được dữ liệu trên máy này!'));
+      return true;
+    }
     try { localStorage.setItem(KEY, JSON.stringify(S)); return true; }
     catch (e) { toast('⚠️ Không lưu được dữ liệu trên máy này!'); return false; }
   }
@@ -634,6 +652,72 @@
     return html;
   }
 
+  // ---------------------------------------------------------------- bảo mật: khoá bằng mật khẩu
+  function securityCard() {
+    if (!V || !V.available()) {
+      return `<section class="card"><h2>Bảo mật</h2><p class="muted small" style="margin:0">Trình duyệt này không hỗ trợ mã hoá (cần mở app qua địa chỉ https).</p></section>`;
+    }
+    if (!vaultKey) {
+      return `<section class="card"><h2>Bảo mật</h2>
+        <p class="muted small" style="margin:0 0 10px">Chưa đặt mật khẩu: ai cầm điện thoại đã mở khoá đều xem được số liệu. Đặt mật khẩu để <b>mã hoá dữ liệu</b> và phải mở khoá mỗi lần vào app.</p>
+        <button class="btn primary" data-act="set-password">🔒 Đặt mật khẩu</button></section>`;
+    }
+    const lm = S.settings.lockMinutes == null ? 5 : Number(S.settings.lockMinutes);
+    const opts = [[0, 'Ngay khi thoát app'], [1, 'Sau 1 phút'], [5, 'Sau 5 phút'], [15, 'Sau 15 phút'], [60, 'Sau 1 giờ']];
+    return `<section class="card"><h2>Bảo mật</h2>
+      <div class="alert ok" style="margin:0 0 12px"><div>🔒 <b>Đã bật mật khẩu.</b> Dữ liệu trên máy được mã hoá.</div></div>
+      <div class="fld"><label for="lockSel">Tự khoá khi rời app</label>
+        <select id="lockSel" data-lock>${opts.map(o => `<option value="${o[0]}" ${o[0] === lm ? 'selected' : ''}>${o[1]}</option>`).join('')}</select></div>
+      <div class="btn-row"><button class="btn" data-act="lock-now">Khoá ngay</button><button class="btn" data-act="change-password">Đổi mật khẩu</button></div>
+      <button class="link danger" data-act="disable-password">Tắt mật khẩu</button>
+      <p class="hint">Quên mật khẩu thì không khôi phục được dữ liệu (chỉ còn cách xoá rồi nhập lại từ file sao lưu). App không dùng được Face ID; nếu iPhone đề nghị lưu mật khẩu vào Chuỗi khoá iCloud, bạn có thể điền tự động bằng Face ID khi mở khoá.</p></section>`;
+  }
+
+  function showLock() {
+    $('#view').innerHTML = ''; closeSheet();
+    $('#lock').hidden = false; document.body.classList.add('noscroll');
+    $('#lockPw').value = ''; $('#lockErr').textContent = '';
+    setTimeout(() => $('#lockPw').focus(), 60);
+  }
+  function hideLock() { $('#lock').hidden = true; document.body.classList.remove('noscroll'); }
+
+  // Khoá ngay: che màn hình tức thì, chờ lưu xong rồi xoá dữ liệu và khoá giải mã khỏi bộ nhớ
+  function lockApp() {
+    if (!vaultKey || locked) return;
+    locked = true; showLock();
+    const wipeMem = () => { vaultKey = null; vaultHeader = null; S = L.emptyState(); $('#view').innerHTML = ''; };
+    saveChain.then(wipeMem, wipeMem);
+  }
+
+  async function tryUnlock(pw) {
+    const wait = lockedUntil - Date.now();
+    if (wait > 0) return `Thử lại sau ${Math.ceil(wait / 1000)} giây.`;
+    try {
+      const r = await V.open(pw, JSON.parse(localStorage.getItem(KEY_ENC)));
+      S = L.migrate(JSON.parse(r.text)); vaultKey = r.key; vaultHeader = r.header; locked = false; failCount = 0;
+      try { localStorage.removeItem(KEY); } catch (e) { /* bỏ qua */ }
+      hideLock(); render(true);
+      return '';
+    } catch (e) {
+      failCount++;
+      if (failCount >= 3) lockedUntil = Date.now() + Math.min(60, 3 * Math.pow(2, failCount - 3)) * 1000;
+      return 'Mật khẩu không đúng.' + (failCount >= 3 ? ' Chờ vài giây rồi thử lại.' : '');
+    }
+  }
+
+  const pwField = (id, label, auto) => `<div class="fld"><label for="${id}">${label}</label><input id="${id}" type="password" autocomplete="${auto}" autocapitalize="off" autocorrect="off" spellcheck="false"></div>`;
+  function passwordSheet(mode) {
+    const title = mode === 'set' ? 'Đặt mật khẩu' : mode === 'change' ? 'Đổi mật khẩu' : 'Tắt mật khẩu';
+    openSheet(title, `
+      ${mode === 'disable' ? '<p class="muted small" style="margin:0 0 12px">Tắt mật khẩu sẽ lưu lại dữ liệu <b>không mã hoá</b> trên máy này.</p>'
+        : '<div class="alert bad" style="margin:0 0 12px"><div>⚠️ <b>Quên mật khẩu là mất dữ liệu</b>, không ai khôi phục được (kể cả mình). Hãy <b>xuất file sao lưu</b> trước và nhớ kỹ mật khẩu.</div></div>'}
+      ${mode !== 'set' ? pwField('f-pw0', 'Mật khẩu hiện tại', 'current-password') : ''}
+      ${mode !== 'disable' ? pwField('f-pw1', 'Mật khẩu mới (từ 8 ký tự)', 'new-password') + pwField('f-pw2', 'Nhập lại mật khẩu mới', 'new-password') : ''}
+      <div class="err" id="err"></div>
+      <button class="btn primary lg" data-act="save-password" data-mode="${mode}">${title}</button>`);
+    const f = $('#f-pw0') || $('#f-pw1'); if (f) setTimeout(() => f.focus(), 60);
+  }
+
   // ---------------------------------------------------------------- màn hình: CÀI ĐẶT
   function viewSettings() {
     const st = S.settings;
@@ -646,9 +730,11 @@
         ${nField('wearPerKm', 'Hao mòn xe', st.wearPerKm, 'đ/km', 'int', 'Nhớt + lốp + phanh + sên nhông... Mặc định 240đ/km, chỉnh theo thực tế (giá nhớt, lốp... ở tiệm của bạn).')}
         ${nField('oilInterval', 'Chu kỳ thay nhớt', st.oilInterval, 'km', 'int')}
       </section>
+      ${securityCard()}
       <section class="card"><h2>Sao lưu dữ liệu</h2>
-        <p class="muted small" style="margin:0 0 10px">Dữ liệu chỉ lưu trên điện thoại này. Hãy sao lưu thường xuyên (lưu file vào Files/iCloud). Lần cuối: <b>${last}</b>.</p>
+        <p class="muted small" style="margin:0 0 10px">Dữ liệu chỉ lưu trên điện thoại này. Hãy sao lưu thường xuyên (lưu file vào Files/iCloud). Lần cuối: <b>${last}</b>.${vaultKey ? ' File xuất ra được <b>mã hoá bằng mật khẩu hiện tại</b>; muốn mở lại phải nhớ mật khẩu đó.' : ''}</p>
         <div class="btn-row"><button class="btn" data-act="export">⬆︎ Xuất file</button><button class="btn" data-act="import">⬇︎ Nhập file</button></div>
+        ${vaultKey ? '<button class="link" data-act="export-plain">Xuất file không mã hoá (không khuyến nghị)</button>' : ''}
         <button class="link danger" data-act="wipe">Xoá toàn bộ dữ liệu</button></section>
       <section class="card"><h2>Cách tính</h2><div class="muted small" style="line-height:1.55">
         <b>Lãi ca</b> = thu ròng app + thưởng/tip − km × (xăng/km + hao mòn/km).<br>
@@ -659,6 +745,7 @@
 
   // ---------------------------------------------------------------- dựng màn hình
   function render(scrollTop) {
+    if (locked) return;
     $('#view').innerHTML = ({ overview: viewOverview, shift: viewShift, spend: viewSpend, car: viewCar, settings: viewSettings })[tab]();
     $('#title').textContent = TITLES[tab];
     document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
@@ -937,11 +1024,75 @@
   A.prev = () => { period.off--; render(); };
   A.next = () => { if (period.off < 0) { period.off++; render(); } };
 
+  // Mật khẩu
+  A['set-password'] = () => passwordSheet('set');
+  A['change-password'] = () => passwordSheet('change');
+  A['disable-password'] = () => passwordSheet('disable');
+  A['lock-now'] = () => lockApp();
+  A['save-password'] = async el => {
+    const mode = el.dataset.mode, label = el.textContent;
+    const p0 = $('#f-pw0') ? $('#f-pw0').value : '', p1 = $('#f-pw1') ? $('#f-pw1').value : '', p2 = $('#f-pw2') ? $('#f-pw2').value : '';
+    if (mode !== 'disable') {
+      if (p1.length < 8) return setErr('Mật khẩu cần ít nhất 8 ký tự.');
+      if (p1 !== p2) return setErr('Hai lần nhập chưa giống nhau.');
+    }
+    el.disabled = true; el.textContent = 'Đang xử lý…'; setErr('');
+    const fail = msg => { el.disabled = false; el.textContent = label; setErr(msg); };
+    try {
+      if (mode !== 'set') { // phải đúng mật khẩu hiện tại
+        try { await V.open(p0, JSON.parse(localStorage.getItem(KEY_ENC))); } catch (e) { return fail('Mật khẩu hiện tại không đúng.'); }
+      }
+      await saveChain; // chờ các lần lưu đang dở
+      if (mode === 'disable') {
+        localStorage.setItem(KEY, JSON.stringify(S));   // ghi bản thô trước
+        localStorage.removeItem(KEY_ENC);               // rồi mới bỏ bản mã
+        vaultKey = null; vaultHeader = null;
+        closeSheet(); render(); toast('Đã tắt mật khẩu');
+        return;
+      }
+      const text = JSON.stringify(S);
+      const c = await V.create(p1, text);
+      if ((await V.decryptText(c.key, c.pkg)) !== text) throw new Error('verify'); // đọc lại được thì mới bỏ bản thô
+      localStorage.setItem(KEY_ENC, JSON.stringify(c.pkg));
+      localStorage.removeItem(KEY);
+      vaultKey = c.key; vaultHeader = c.header;
+      closeSheet(); render(); toast(mode === 'set' ? '🔒 Đã đặt mật khẩu, dữ liệu đã được mã hoá' : 'Đã đổi mật khẩu');
+    } catch (e) {
+      fail('Không xử lý được. Dữ liệu của bạn vẫn nguyên vẹn, hãy thử lại.');
+    }
+  };
+  A['forgot-pw'] = () => {
+    if (!confirm('Xoá toàn bộ dữ liệu trên máy này để đặt lại? Bạn chỉ khôi phục được bằng file sao lưu (cần nhớ mật khẩu của file đó). Dữ liệu chưa sao lưu sẽ MẤT.')) return;
+    if (!confirm('Chắc chắn xoá hết?')) return;
+    try { localStorage.removeItem(KEY_ENC); localStorage.removeItem(KEY); } catch (e) { /* bỏ qua */ }
+    vaultKey = null; vaultHeader = null; locked = false; S = L.emptyState(); failCount = 0; lockedUntil = 0;
+    hideLock(); render(true); toast('Đã xoá dữ liệu. Bạn có thể Nhập file sao lưu ở Cài đặt.');
+  };
+  A['import-enc'] = async el => {
+    const pw = $('#f-pwimp') ? $('#f-pwimp').value : '';
+    el.disabled = true; el.textContent = 'Đang mở…';
+    try {
+      const r = await V.open(pw, pendingImport);
+      pendingImport = null; closeSheet();
+      applyImport(JSON.parse(r.text));
+    } catch (e) { el.disabled = false; el.textContent = 'Mở file'; setErr('Mật khẩu của file sao lưu không đúng.'); }
+  };
+
   // Sao lưu
-  A.export = async () => {
-    const name = `grab-thuchi-${L.todayKey()}.json`;
+  A['export-plain'] = () => {
+    if (confirm('File không mã hoá chứa toàn bộ số liệu của bạn, ai có file đều đọc được. Vẫn xuất?')) doExport(true);
+  };
+  A.export = () => doExport(false);
+  async function doExport(plain) {
+    let name = `grab-thuchi-${L.todayKey()}.json`;
     S.lastBackup = new Date().toISOString(); save();
-    const blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
+    let text;
+    if (vaultKey && !plain) { // có mật khẩu: file xuất ra cũng được mã hoá (cùng muối, IV mới)
+      const rec = await V.encryptText(vaultKey, JSON.stringify(S));
+      text = JSON.stringify(Object.assign({}, vaultHeader, rec), null, 2);
+      name = `grab-thuchi-${L.todayKey()}.mahoa.json`;
+    } else text = JSON.stringify(S, null, 2);
+    const blob = new Blob([text], { type: 'application/json' });
     try {
       const file = new File([blob], name, { type: 'application/json' });
       if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); render(); return; }
@@ -949,13 +1100,22 @@
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     render(); toast('Đã xuất file sao lưu');
-  };
+  }
   A.import = () => $('#importFile').click();
   A.wipe = () => {
     if (!confirm('Xoá TOÀN BỘ dữ liệu trên máy này? Không thể hoàn tác (hãy sao lưu trước).')) return;
     if (!confirm('Chắc chắn xoá hết?')) return;
+    try { localStorage.removeItem(KEY_ENC); } catch (e) { /* bỏ qua */ }
+    vaultKey = null; vaultHeader = null; // xoá xong thì không còn mật khẩu
     S = L.emptyState(); save(); render(true); toast('Đã xoá dữ liệu');
   };
+
+  // Áp dụng dữ liệu nhập từ file (đã giải mã nếu cần)
+  function applyImport(o) {
+    if (!o || typeof o !== 'object' || !o.settings || !Array.isArray(o.shifts)) { toast('File không đúng định dạng'); return; }
+    if (!confirm(`Nhập file này sẽ THAY THẾ dữ liệu hiện tại.\nFile có ${o.shifts.length} ca, ${(o.expenses || []).length} khoản chi. Tiếp tục?`)) return;
+    S = L.migrate(o); save(); render(true); toast('Đã nhập dữ liệu');
+  }
 
   // ---------------------------------------------------------------- sự kiện
   document.addEventListener('click', e => {
@@ -979,6 +1139,10 @@
   // Cài đặt: lưu khi đổi
   document.addEventListener('change', e => {
     const t = e.target;
+    if (t.dataset && t.dataset.lock !== undefined) { // thời gian tự khoá
+      S.settings.lockMinutes = Number(t.value); save(); toast('Đã lưu cài đặt');
+      return;
+    }
     if (t.dataset && t.dataset.setting) {
       const key = t.dataset.setting;
       const v = key === 'fuelL100' ? parseFloat(t.value.replace(',', '.')) : Number(t.value.replace(/\D/g, ''));
@@ -995,25 +1159,53 @@
     if (!f) return;
     const rd = new FileReader();
     rd.onload = () => {
-      try {
-        const o = JSON.parse(rd.result);
-        if (!o || typeof o !== 'object' || !o.settings || !Array.isArray(o.shifts)) throw new Error('bad');
-        if (!confirm(`Nhập file này sẽ THAY THẾ dữ liệu hiện tại.\nFile có ${o.shifts.length} ca, ${(o.expenses || []).length} khoản chi. Tiếp tục?`)) return;
-        S = L.migrate(o); save(); render(true); toast('Đã nhập dữ liệu');
-      } catch (err) { toast('File không đúng định dạng'); }
+      let o;
+      try { o = JSON.parse(rd.result); } catch (err) { toast('File không đúng định dạng'); return; }
+      if (V && V.isPackage(o)) { // file sao lưu đã mã hoá: hỏi mật khẩu của file
+        pendingImport = o;
+        openSheet('Mở file sao lưu đã mã hoá', `
+          <p class="muted small" style="margin:0 0 12px">Nhập mật khẩu đã dùng khi xuất file này.</p>
+          ${pwField('f-pwimp', 'Mật khẩu của file', 'off')}
+          <div class="err" id="err"></div>
+          <button class="btn primary lg" data-act="import-enc">Mở file</button>`);
+        setTimeout(() => { const f = $('#f-pwimp'); if (f) f.focus(); }, 60);
+        return;
+      }
+      applyImport(o);
     };
     rd.readAsText(f);
   });
 
   setInterval(() => { const t = $('#timer'); if (t && S.active) t.textContent = elapsed(S.active.start); }, 20000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && tab === 'shift' && !$('#sheet-root')) render(); });
+  // Tự khoá khi rời app đủ lâu (đặt ở Cài đặt → Bảo mật)
+  document.addEventListener('visibilitychange', () => {
+    const lm = S.settings.lockMinutes == null ? 5 : Number(S.settings.lockMinutes);
+    if (document.hidden) {
+      hiddenAt = Date.now();
+      if (vaultKey && !locked && lm === 0) lockApp();
+    } else if (vaultKey && !locked && hiddenAt && lm > 0 && Date.now() - hiddenAt >= lm * 60000) {
+      lockApp();
+    } else if (!locked && tab === 'shift' && !$('#sheet-root')) render();
+  });
+
+  // Màn khoá
+  $('#lockForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = $('#lockBtn'), pw = $('#lockPw').value;
+    if (!pw) return;
+    btn.disabled = true; btn.textContent = 'Đang mở…'; $('#lockErr').textContent = '';
+    const msg = await tryUnlock(pw);
+    btn.disabled = false; btn.textContent = 'Mở khoá';
+    if (msg) { $('#lockErr').textContent = msg; $('#lockPw').select(); } else $('#lockPw').value = '';
+  });
+  $('#lockForgot').addEventListener('click', () => A['forgot-pw']());
 
   // ---------------------------------------------------------------- khởi động
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => { });
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
-  render(true);
+  if (locked) showLock(); else render(true);
 
   window.__app = { get S() { return S; }, render, A };
 })();

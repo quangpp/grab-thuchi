@@ -181,6 +181,17 @@ body.noscroll #nav { display: none; }
 .sheet-head .x { appearance: none; border: 0; background: var(--bg); color: var(--muted); width: 34px; height: 34px; border-radius: 50%; font-size: 15px; cursor: pointer; }
 .sheet-body { overflow-y: auto; padding: 8px 18px calc(env(safe-area-inset-bottom) + 20px); -webkit-overflow-scrolling: touch; }
 
+/* Màn khoá bằng mật khẩu */
+#lock { position: fixed; inset: 0; z-index: 100; background: var(--bg); overflow-y: auto; }
+#lock:not([hidden]) { display: flex; align-items: center; justify-content: center; padding: 24px; }
+.lock-box { width: 100%; max-width: 360px; text-align: center; }
+.lock-ico { font-size: 44px; margin-bottom: 6px; }
+.lock-box h1 { margin: 0 0 4px; font-size: 24px; }
+.lock-box form { text-align: left; margin-top: 18px; }
+.lock-box input[type="password"] { text-align: center; font-size: 18px; letter-spacing: .08em; }
+.lock-box .err { text-align: center; margin-top: 8px; }
+.vh { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
 #toast {
   position: fixed; left: 50%; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 14px); transform: translate(-50%, 20px);
   background: #14201b; color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 14px; font-weight: 600;

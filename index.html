@@ -36,9 +36,25 @@
     </button>
   </nav>
 
+  <div id="lock" hidden>
+    <div class="lock-box">
+      <div class="lock-ico">🔒</div>
+      <h1>Sổ Thu Chi Grab</h1>
+      <p class="muted">Nhập mật khẩu để mở dữ liệu</p>
+      <form id="lockForm" autocomplete="on">
+        <input type="text" name="username" value="grab-thuchi" autocomplete="username" tabindex="-1" aria-hidden="true" class="vh">
+        <input id="lockPw" type="password" name="password" autocomplete="current-password" placeholder="Mật khẩu" enterkeyhint="go" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <div id="lockErr" class="err" role="alert"></div>
+        <button id="lockBtn" class="btn primary lg" type="submit">Mở khoá</button>
+      </form>
+      <button id="lockForgot" class="link" type="button">Quên mật khẩu?</button>
+    </div>
+  </div>
+
   <div id="toast" role="status"></div>
   <input type="file" id="importFile" accept="application/json,.json" hidden>
 
+  <script src="vault.js"></script>
   <script src="logic.js"></script>
   <script src="app.js"></script>
 </body>

@@ -9,6 +9,7 @@
     fuelL100: 2.2,      // lít / 100 km (mặc định cho tới khi học được từ các lần đổ xăng)
     wearPerKm: 240,     // đ/km hao mòn (nhớt, lốp, phanh, sên nhông...)
     oilInterval: 2000,  // km giữa hai lần thay nhớt
+    lockMinutes: 5,     // tự khoá khi rời app quá số phút này (0 = khoá ngay khi thoát app); chỉ có tác dụng khi đã đặt mật khẩu
   };
 
   const CATS = {

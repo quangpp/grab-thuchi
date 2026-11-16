@@ -18,12 +18,17 @@ Mở http://localhost:8765
 
 Chỉ code nằm công khai; số liệu thu chi của bạn vẫn chỉ ở trên iPhone.
 
+## Mật khẩu (khoá dữ liệu)
+
+Cài đặt → **Bảo mật → Đặt mật khẩu**. Khi bật, dữ liệu trên máy được **mã hoá AES-256-GCM** (khoá sinh từ mật khẩu bằng PBKDF2-SHA256, 600.000 vòng) và phải mở khoá mỗi lần vào app; có tuỳ chọn tự khoá khi rời app. File sao lưu xuất ra cũng được mã hoá. **Quên mật khẩu thì không khôi phục được dữ liệu** (chỉ còn cách xoá và nhập lại từ file sao lưu). Mật khẩu không được lưu ở đâu cả. App không dùng được Face ID.
+
 ## Sao lưu
 
 Cài đặt → **Xuất file**, lưu vào Files/iCloud. Nên làm mỗi tuần. Đổi điện thoại thì **Nhập file**.
 
 ## Cấu trúc
 
+- `vault.js` — mã hoá/giải mã bằng mật khẩu (WebCrypto)
 - `logic.js` — toàn bộ phép tính (xăng/km học từ lần đổ xăng, hao mòn, lãi ca, tổng hợp tuần/tháng)
 - `app.js`, `styles.css`, `index.html` — giao diện
 - `sw.js`, `manifest.webmanifest`, `icons/` — cài lên màn hình chính, chạy offline
