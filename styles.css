@@ -1,17 +1,26 @@
+/* Màu chủ đạo (--accent) đổi được theo giao diện; xanh lá (--pos) chỉ dành cho số tiền dương (thu, lãi). */
 :root {
-  --bg: #f3f6f4; --card: #ffffff; --text: #14201b; --muted: #66756e; --line: #e2e9e5;
-  --accent: #0b8f5a; --accent-d: #076b43; --accent-t: #e3f4eb;
+  --bg: #f2f5fa; --card: #ffffff; --text: #152033; --muted: #66738a; --line: #e1e7f0;
+  --accent: #3563e9; --accent-d: #2549b8; --accent-t: #e7edfd;
+  --pos: #0f9d6c; --pos-d: #0a7a54; --pos-t: #e1f5ec;
   --red: #d2433b; --red-t: #fcebea; --amber: #b7791f; --amber-t: #fdf2d9; --blue: #2f6fb3;
-  --shadow: 0 1px 2px rgba(15, 40, 30, .06), 0 4px 14px rgba(15, 40, 30, .05);
+  --shadow: 0 1px 2px rgba(20, 30, 60, .06), 0 4px 14px rgba(20, 30, 60, .05);
   --nav-h: 62px;
 }
+html[data-theme="violet"] { --bg: #f5f3fa; --text: #1c1830; --muted: #70698a; --line: #e6e1f0; --accent: #6d4ae0; --accent-d: #5232b5; --accent-t: #efeafd; }
+html[data-theme="terra"] { --bg: #faf4f0; --text: #2a1d16; --muted: #86705f; --line: #eee2d9; --accent: #d2582a; --accent-d: #a2431d; --accent-t: #fcebe2; }
+html[data-theme="slate"] { --bg: #f3f4f6; --text: #1b212b; --muted: #6b7685; --line: #e3e6eb; --accent: #3f4f63; --accent-d: #2a3646; --accent-t: #e8ecf1; }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0d1311; --card: #172019; --text: #e8f0ec; --muted: #8fa198; --line: #25332b;
-    --accent: #2fbf84; --accent-d: #5fd9a6; --accent-t: #12301f;
+    --bg: #0d1220; --card: #161d30; --text: #e8edf7; --muted: #93a0b8; --line: #252f48;
+    --accent: #6f8dff; --accent-d: #9db3ff; --accent-t: #182345;
+    --pos: #3ddc97; --pos-d: #6ee7b7; --pos-t: #0f2e22;
     --red: #ff7b72; --red-t: #3a1b19; --amber: #e3b341; --amber-t: #35290f; --blue: #6cb0f5;
     --shadow: none;
   }
+  html[data-theme="violet"] { --bg: #110e1d; --card: #1a1629; --text: #ece8f7; --muted: #9b94b5; --line: #2a2442; --accent: #a28bff; --accent-d: #c4b5ff; --accent-t: #241c45; }
+  html[data-theme="terra"] { --bg: #1a120d; --card: #251a14; --text: #f4e9e1; --muted: #b39c8c; --line: #3a2b21; --accent: #ff935f; --accent-d: #ffb590; --accent-t: #3a1f12; }
+  html[data-theme="slate"] { --bg: #0f1217; --card: #181d25; --text: #e9edf2; --muted: #8f9aa9; --line: #262d38; --accent: #8fa3bd; --accent-d: #b8c6d9; --accent-t: #1d2735; }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html { -webkit-text-size-adjust: 100%; }
@@ -103,7 +112,7 @@ summary { cursor: pointer; color: var(--accent-d); font-weight: 600; font-size: 
 .row:last-child { border-bottom: 0; }
 .row .l { min-width: 0; } .row .l b { font-weight: 600; } .row .l .muted { font-size: 13px; display: block; }
 .amt { font-weight: 700; white-space: nowrap; text-align: right; }
-.pos { color: var(--accent-d); } .neg { color: var(--red); }
+.pos { color: var(--pos-d); } .neg { color: var(--red); }
 .group-h { font-size: 13px; font-weight: 700; color: var(--muted); padding: 10px 12px 2px; }
 .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-right: 6px; vertical-align: 1px; }
 .badge.ride { background: #e1edf9; color: var(--blue); } .badge.personal { background: var(--amber-t); color: var(--amber); } .badge.saving { background: var(--accent-t); color: var(--accent-d); }
@@ -120,7 +129,7 @@ summary { cursor: pointer; color: var(--accent-d); font-weight: 600; font-size: 
 .tile { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px 10px; box-shadow: var(--shadow); min-width: 0; }
 .tile .k { font-size: 12px; font-weight: 700; color: var(--muted); }
 .tile .v { font-size: 17px; font-weight: 800; letter-spacing: -.02em; margin-top: 2px; white-space: nowrap; }
-.tile.in .v { color: var(--accent-d); } .tile.out .v { color: var(--red); }
+.tile.in .v { color: var(--pos-d); } .tile.out .v { color: var(--red); }
 .flow .ln { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; font-size: 15px; }
 .flow .ln.sub { padding: 2px 0 2px 16px; font-size: 13.5px; color: var(--muted); }
 .tiles.two { grid-template-columns: 1fr 1fr; margin-top: -6px; }
@@ -136,13 +145,13 @@ summary { cursor: pointer; color: var(--accent-d); font-weight: 600; font-size: 
 .metric .k { font-size: 12px; color: var(--muted); font-weight: 600; }
 .metric .v { font-size: 18px; font-weight: 800; }
 svg.chart { width: 100%; height: auto; display: block; }
-svg.chart .pos { fill: var(--accent); } svg.chart .neg { fill: var(--red); }
+svg.chart .pos { fill: var(--pos); } svg.chart .neg { fill: var(--red); }
 svg.chart text { fill: var(--muted); font-size: 9px; text-anchor: middle; font-family: inherit; }
 svg.chart line { stroke: var(--line); }
 
 .alert { display: flex; gap: 10px; align-items: flex-start; border-radius: 14px; padding: 12px 14px; margin: 0 0 14px; font-size: 14.5px; background: var(--amber-t); color: var(--text); border: 1px solid var(--amber); }
 .alert.bad { background: var(--red-t); border-color: var(--red); }
-.alert.ok { background: var(--accent-t); border-color: var(--accent); }
+.alert.ok { background: var(--pos-t); border-color: var(--pos); }
 .alert b { font-weight: 700; }
 .alert button { margin-left: auto; flex: none; }
 .progress { height: 10px; background: var(--line); border-radius: 6px; overflow: hidden; margin: 10px 0 6px; }
@@ -188,7 +197,11 @@ body.noscroll #nav { display: none; }
 .catrow .cr-top { display: flex; justify-content: space-between; gap: 10px; font-size: 15px; margin-bottom: 5px; }
 .bar { height: 8px; background: var(--line); border-radius: 6px; overflow: hidden; }
 .bar i { display: block; height: 100%; border-radius: 6px; background: var(--red); }
-.bar i.in { background: var(--accent); }
+.bar i.in { background: var(--pos); }
+.themes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.theme { appearance: none; display: flex; align-items: center; gap: 10px; background: var(--card); color: var(--text); border: 1.5px solid var(--line); border-radius: 14px; padding: 10px; font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; min-height: 48px; text-align: left; white-space: nowrap; }
+.theme i { display: block; width: 22px; height: 22px; border-radius: 50%; flex: none; }
+.theme.on { border-color: var(--accent); background: var(--accent-t); }
 .fchips { display: flex; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
 
 /* Màn khoá bằng mật khẩu */

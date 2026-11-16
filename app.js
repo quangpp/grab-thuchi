@@ -618,7 +618,7 @@
         <div class="tile"><div class="k">HAO MÒN → QUỸ BẢO TRÌ</div>${tv('', tileMoney(m.wear))}</div></div>`;
 
     // Tầng 1
-    const segs = [['Xăng', m.fuel, '#e0a030'], ['Hao mòn xe', m.wear, '#8e7cc3'], ['Chi chạy xe khác', m.rideExp, '#4a90d9'], ['Lợi nhuận', Math.max(0, m.profit), '#0b8f5a']];
+    const segs = [['Xăng', m.fuel, '#e0a030'], ['Hao mòn xe', m.wear, '#8e7cc3'], ['Chi chạy xe khác', m.rideExp, '#4a90d9'], ['Lợi nhuận', Math.max(0, m.profit), 'var(--pos)']];
     const tot = segs.reduce((a, s) => a + s[1], 0) || 1;
     const catLines = (obj) => Object.keys(obj).sort((a, b) => obj[b] - obj[a]).map(k => `<div class="ln sub"><span>${esc(k)}</span><span>${fmtMoney(obj[k])}</span></div>`).join('');
     html += `<section class="card flow"><div class="eyebrow">Chạy xe có lời không?</div>
@@ -838,6 +838,22 @@
       ${t ? `<button class="link danger" data-act="del-tx" data-id="${t.id}">Xoá giao dịch</button>` : ''}`);
   }
 
+  // ---------------------------------------------------------------- giao diện (màu chủ đạo)
+  const THEMES = [['blue', 'Xanh dương', '#3563e9'], ['violet', 'Tím', '#6d4ae0'], ['terra', 'Cam đất', '#d2582a'], ['slate', 'Than xám', '#3f4f63']];
+  function currentTheme() { try { return localStorage.getItem('grab-theme') || 'blue'; } catch (e) { return 'blue'; } }
+  function applyTheme(t) {
+    if (t === 'blue') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
+    try { localStorage.setItem('grab-theme', t); } catch (e) { /* bỏ qua */ }
+    const meta = document.querySelector('meta[name="theme-color"]'), sw = THEMES.find(x => x[0] === t);
+    if (meta && sw) meta.setAttribute('content', sw[2]);
+  }
+  function themeCard() {
+    const cur = currentTheme();
+    return `<section class="card"><h2>Giao diện</h2>
+      <div class="themes">${THEMES.map(t => `<button class="theme ${t[0] === cur ? 'on' : ''}" data-act="set-theme" data-t="${t[0]}"><i style="background:${t[2]}"></i><span>${t[1]}</span></button>`).join('')}</div>
+      <p class="hint">Màu xanh lá chỉ còn dùng cho số tiền dương (thu, lãi). Chế độ sáng/tối theo cài đặt của iPhone.</p></section>`;
+  }
+
   // ---------------------------------------------------------------- bảo mật: khoá bằng mật khẩu
   function securityCard() {
     if (!V || !V.available()) {
@@ -925,7 +941,8 @@
 
   function viewSettings() {
     const last = S.lastBackup ? new Date(S.lastBackup).toLocaleString('vi-VN') : 'chưa có';
-    return `${securityCard()}
+    return `${themeCard()}
+      ${securityCard()}
       <section class="card"><h2>Sao lưu dữ liệu</h2>
         <p class="muted small" style="margin:0 0 10px">Dữ liệu chỉ lưu trên điện thoại này. Hãy sao lưu thường xuyên (lưu file vào Files/iCloud). Lần cuối: <b>${last}</b>.${vaultKey ? ' File xuất ra được <b>mã hoá bằng mật khẩu hiện tại</b>; muốn mở lại phải nhớ mật khẩu đó.' : ''}</p>
         <div class="btn-row"><button class="btn" data-act="export">⬆︎ Xuất file</button><button class="btn" data-act="import">⬇︎ Nhập file</button></div>
@@ -1052,6 +1069,8 @@
     sh.extras = (sh.extras || []).filter(x => x.id !== el.dataset.id);
     save(); render(); if (sh.noClock) simpleSheet(sh); else shiftSheet('edit', sh);
   };
+
+  A['set-theme'] = el => { applyTheme(el.dataset.t); render(); };
 
   // ---- Sổ tài chính: điều hướng
   A.gsub = el => { gsub = el.dataset.s; render(true); };
@@ -1512,6 +1531,7 @@
     navigator.serviceWorker.register('sw.js').catch(() => { });
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
+  applyTheme(currentTheme());
   if (locked) showLock(); else render(true);
 
   window.__app = { get S() { return S; }, render, A };

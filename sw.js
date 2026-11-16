@@ -1,5 +1,5 @@
 /* Service worker: dùng được offline. Ưu tiên mạng (để cập nhật nhanh), mất mạng thì dùng bản đã lưu. */
-const CACHE = 'grab-thuchi-v3';
+const CACHE = 'grab-thuchi-v4';
 const ASSETS = [
   './', './index.html', './styles.css', './vault.js', './logic.js', './app.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
