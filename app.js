@@ -319,9 +319,9 @@
     const ex = L.grabExcluded(S);
     const warn = implicit
       ? `<div class="alert"><div>ℹ️ <b>Bạn chưa nhập vốn ban đầu</b> nên app tính Tiền Grab từ 0 kể từ ${cd}, mọi ca đã nhập đều được cộng. Nếu bạn có sẵn một số tiền Grab từ trước, bấm "Nhập vốn" bên dưới.</div></div>`
-      : ex.n ? `<div class="alert bad"><div>⚠️ <b>${ex.n} ca (thu ${fmtMoney(ex.income)}) không được cộng</b> vì nằm từ ngày chốt vốn (${cd}) trở về trước: app coi chúng đã nằm trong vốn. Nếu chưa tính vào vốn, hãy lùi ngày chốt vốn lên sớm hơn ca đầu tiên, hoặc xoá vốn để tính từ 0.</div><button class="btn sm" data-act="set-capital">Sửa vốn</button></div>` : '';
+      : ex.n > (cap.ack || 0) ? `<div class="alert bad"><div>⚠️ <b>${ex.n} ca (thu ${fmtMoney(ex.income)}) không được cộng</b> vì nằm ${cap.when === 'start' ? 'trước' : 'từ'} ngày chốt vốn (${cd}${cap.when === 'start' ? '' : ' trở về trước'}): app coi chúng đã nằm trong vốn. Nếu chưa tính vào vốn, hãy lùi ngày chốt vốn lên sớm hơn ca đầu tiên (hoặc chọn "Đầu ngày"), hoặc xoá vốn để tính từ 0.</div><div style="display:flex;flex-direction:column;gap:6px;margin-left:auto;flex:none"><button class="btn sm" data-act="set-capital" style="margin:0">Sửa vốn</button><button class="btn sm" data-act="ack-excluded" style="margin:0">Đã hiểu</button></div></div>` : '';
     return `${warn}<section class="card flow"><div class="eyebrow">Tiền Grab đang cầm (theo app)</div>
-        <div class="ln" style="margin-top:6px"><span>Vốn ban đầu <span class="muted small">(${implicit ? 'chưa nhập, tính từ 0' : 'chốt ' + cd})</span></span><span>${fmtMoney(p.cap)}</span></div>
+        <div class="ln" style="margin-top:6px"><span>Vốn ban đầu <span class="muted small">(${implicit ? 'chưa nhập, tính từ 0' : 'chốt ' + cd + ', ' + whenLabel(cap.when)})</span></span><span>${fmtMoney(p.cap)}</span></div>
         <div class="ln"><span>+ Thu nhập các ca <span class="muted small">(thu ròng + tip)</span></span><span>${fmtMoney(p.income)}</span></div>
         <div class="ln"><span>− Xăng đã đổ</span><span>${fmtMoney(p.fuelPaid)}</span></div>
         ${p.fuelPaid > 0 ? `<div class="ln sub"><span>trong đó xăng đi làm / chênh tồn bình</span><span>${fmtMoney(p.commuteFuel)}</span></div>` : ''}
@@ -354,12 +354,24 @@
       </section>`;
   }
 
+  // Chọn con số/ngày này là lúc ĐẦU NGÀY hay CUỐI NGÀY (đầu ngày: các khoản của chính ngày đó được cộng thêm)
+  function whenSeg(sel) {
+    const st = sel === 'start';
+    return `<div class="seg" id="whenseg">
+        <button type="button" class="${st ? 'on' : ''}" data-act="pick-when" data-w="start">Đầu ngày</button>
+        <button type="button" class="${st ? '' : 'on'}" data-act="pick-when" data-w="end">Cuối ngày</button></div>
+      <input type="hidden" id="f-when" value="${st ? 'start' : 'end'}">
+      <div class="hint" style="margin:-6px 0 12px"><b>Đầu ngày:</b> con số lúc bạn chưa chạy hay ghi gì trong ngày đó, nên các ca và khoản của <b>chính ngày đó sẽ được cộng thêm</b>. <b>Cuối ngày:</b> con số đã gồm mọi thứ của ngày đó, chỉ tính từ ngày hôm sau.</div>`;
+  }
+  const whenLabel = w => (w === 'start' ? 'đầu ngày' : 'cuối ngày');
+
   function capitalSheet() {
     const c = S.capital;
     openSheet(c ? 'Sửa vốn ban đầu' : 'Vốn ban đầu', `
       <p class="muted small" style="margin:0 0 12px">Số tiền bạn đang có từ trước (ví dụ lợi nhuận tháng vừa rồi). Không tính là thu nhập. Chỉ các ca, khoản chi, đổ xăng, bảo dưỡng <b>sau ngày chốt</b> mới được cộng hoặc trừ vào.</p>
-      ${dateField('f-date', 'Ngày chốt (tiền tính tới hết ngày này)', c ? c.date : L.lastDayOfPrevMonth())}
-      ${moneyField('f-cap', 'Tổng vốn ban đầu', c ? c.total : '', { focus: true })}
+      ${dateField('f-date', 'Ngày của con số này', c ? c.date : L.lastDayOfPrevMonth())}
+      ${whenSeg(c ? c.when : 'end')}
+      ${moneyField('f-cap', 'Tổng tiền Grab bạn đang có', c ? c.total : '', { focus: true })}
       ${moneyField('f-capfund', 'Trong đó đã để dành cho sửa xe (tuỳ chọn)', c && c.fund ? c.fund : '', { hint: 'Bỏ trống nếu quỹ sửa xe bắt đầu từ 0.' })}
       <div class="err" id="err"></div>
       <button class="btn primary lg" data-act="save-capital">Lưu</button>
@@ -578,7 +590,7 @@
     const capAll = period.kind === 'all' && S.capital ? S.capital : null;
     const capAmt = capAll ? (capAll.total || 0) : 0;
     let from = r.from;
-    if (capAll) { const d = L.keyToDate(capAll.date); d.setDate(d.getDate() + 1); from = L.dateKey(d); }
+    if (capAll) { const d = L.keyToDate(capAll.date); if (capAll.when !== 'start') d.setDate(d.getDate() + 1); from = L.dateKey(d); }
     const m = L.summarize(S, from, r.to);
     const ser = L.series(r, m.byDay);
     m.income += capAmt; m.profit += capAmt; m.remain += capAmt; // perKm/perHour đã tính riêng từ các ca nên không bị ảnh hưởng
@@ -606,7 +618,7 @@
 
     if (capAll) {
       const cd = capAll.date.slice(8) + '/' + capAll.date.slice(5, 7);
-      html += `<div class="hint" style="margin:-4px 0 12px">Tính từ sau ngày chốt vốn (${cd}) và đã cộng vốn ban đầu ${fmtMoney(capAmt)} vào tổng thu. Các khoản ghi trước ngày chốt không tính (đã nằm trong vốn).</div>`;
+      html += `<div class="hint" style="margin:-4px 0 12px">Tính từ ${capAll.when === 'start' ? 'đầu' : 'sau'} ngày chốt vốn (${cd}) và đã cộng vốn ban đầu ${fmtMoney(capAmt)} vào tổng thu. Các khoản ghi trước ngày chốt không tính (đã nằm trong vốn).</div>`;
     }
 
     if (!m.nShifts && !m.nExpenses && !capAmt) {
@@ -695,7 +707,7 @@
       sub = [acctName(e.acct), e.note].filter(Boolean).join(' · ');
       amt = (e.type === 'income' ? '+' : '−') + fmtMoney(e.amount); cls = e.type === 'income' ? 'pos' : 'neg';
     }
-    if (e.src === 'tx' && S.ledger.start && e.date <= S.ledger.start) sub += (sub ? ' · ' : '') + 'chỉ tham khảo, không tính vào số dư';
+    if (e.src === 'tx' && S.ledger.start && !L.ledgerCounts(S, e.date)) sub += (sub ? ' · ' : '') + 'chỉ tham khảo, không tính vào số dư';
     return `<button class="row" data-act="${act}" data-id="${e.id}"><div class="l"><b>${esc(title)}</b><span class="muted">${esc(sub)}</span></div><div class="amt ${cls}">${amt}</div></button>`;
   }
 
@@ -763,14 +775,15 @@
         <h2 style="margin-top:6px">Bước 1: chọn ngày bắt đầu sổ</h2>
         <p class="muted small" style="margin:0 0 10px">Đây là <b>điểm bắt đầu</b>, không phải ngày kết thúc: sổ chạy tiếp mãi từ ngày này, bạn chỉ đặt một lần. Số dư bạn nhập cho từng tài khoản là số dư <b>tại ngày này</b>; các giao dịch từ ngày hôm sau được cộng hoặc trừ dần. Bạn không cần nhập lại dữ liệu cũ hơn.</p>
         ${dateField('f-date', 'Ngày bắt đầu sổ', def)}
+        ${whenSeg(S.capital ? S.capital.when : 'end')}
         <div class="err" id="err"></div>
         <button class="btn primary lg" data-act="ledger-start">Bắt đầu</button></section>`;
     }
     const b = L.accountBalances(S);
     const list = S.accounts.map(a => `<button class="row" data-act="edit-account" data-id="${a.id}"><div class="l"><b>${esc(a.name)}</b><span class="muted">${L.ACCT_KINDS[a.kind] || 'Khác'}</span></div><div class="amt ${b.byId[a.id] < 0 ? 'neg' : ''}">${fmtMoney(b.byId[a.id])}</div></button>`).join('');
-    const grabRow = `<button class="row" data-act="goto-pot"><div class="l"><b>Tiền Grab</b><span class="muted">${b.grab == null ? 'Chưa có dữ liệu Grab nào' : b.grabImplicit ? 'Chưa nhập vốn Grab: đang tính từ 0 kể từ bản ghi Grab đầu tiên. Bấm để nhập vốn.' : L.grabExcluded(S).n ? `⚠️ ${L.grabExcluded(S).n} ca nằm từ ngày chốt vốn Grab trở về trước nên chưa được cộng. Bấm để xem.` : 'Lấy từ mục Grab, bấm để xem chi tiết'}</span></div><div class="amt">${b.grab == null ? '—' : fmtMoney(b.grab)}</div></button>`;
+    const grabRow = `<button class="row" data-act="goto-pot"><div class="l"><b>Tiền Grab</b><span class="muted">${b.grab == null ? 'Chưa có dữ liệu Grab nào' : b.grabImplicit ? 'Chưa nhập vốn Grab: đang tính từ 0 kể từ bản ghi Grab đầu tiên. Bấm để nhập vốn.' : L.grabExcluded(S).n > ((S.capital || {}).ack || 0) ? `⚠️ ${L.grabExcluded(S).n} ca nằm trong phần đã tính vào vốn Grab nên chưa được cộng. Bấm để xem.` : 'Lấy từ mục Grab, bấm để xem chi tiết'}</span></div><div class="amt">${b.grab == null ? '—' : fmtMoney(b.grab)}</div></button>`;
     return `<section class="card"><div class="eyebrow">Tổng tài sản</div><div class="big ${b.total < 0 ? 'neg' : ''}">${fmtMoney(b.total)}</div>
-        <div class="muted small">Sổ bắt đầu từ ngày ${dmOf(S.ledger.start)}, chạy tiếp lâu dài.</div>
+        <div class="muted small">Sổ bắt đầu từ ${whenLabel(S.ledger.when)} ngày ${dmOf(S.ledger.start)}, chạy tiếp lâu dài.</div>
         <button class="btn primary lg" data-act="add-account">＋ Thêm tài khoản</button></section>
       <section class="card tight"><div class="group-h">Tài khoản</div>${list || '<div class="empty">Chưa có tài khoản nào. Thêm ví tiền mặt, tài khoản ngân hàng...</div>'}${grabRow}</section>
       <button class="link" data-act="edit-start">Sửa ngày bắt đầu sổ</button>`;
@@ -791,7 +804,7 @@
       <label class="l">Loại</label>
       <div class="chips" id="kchips">${Object.keys(L.ACCT_KINDS).map(k => `<button type="button" class="chip ${k === kind ? 'on' : ''}" data-act="pick-kind" data-k="${k}">${L.ACCT_KINDS[k]}</button>`).join('')}</div>
       <input type="hidden" id="f-kind" value="${kind}">
-      ${moneyField('f-open', `Số dư tại ngày bắt đầu sổ (${dmOf(S.ledger.start)})`, a ? a.opening : '', { focus: !a })}
+      ${moneyField('f-open', `Số dư tại ${whenLabel(S.ledger.when)} ngày ${dmOf(S.ledger.start)} (ngày bắt đầu sổ)`, a ? a.opening : '', { focus: !a })}
       <div class="err" id="err"></div>
       <button class="btn primary lg" data-act="save-account" data-id="${a ? a.id : ''}">${a ? 'Lưu thay đổi' : 'Thêm tài khoản'}</button>
       ${a ? `<div class="card" style="margin:14px 0 0;background:var(--bg);box-shadow:none">
@@ -830,7 +843,7 @@
         ${textField('f-cat2', 'Hoặc gõ danh mục khác', '', 'vd: Học phí, Sửa nhà...')}`;
     }
     return body + textField('f-note', 'Ghi chú (tuỳ chọn)', note, '') + dateField('f-date', 'Ngày', date)
-      + `<div class="hint" style="margin:-6px 0 10px">Ngày từ ${dmOf(S.ledger.start)} trở về trước (ngày bắt đầu sổ) chỉ để tham khảo, không cộng vào số dư.</div>`;
+      + `<div class="hint" style="margin:-6px 0 10px">Ngày ${S.ledger.when === 'start' ? 'trước' : 'từ'} ${dmOf(S.ledger.start)}${S.ledger.when === 'start' ? '' : ' trở về trước'} (ngày bắt đầu sổ) chỉ để tham khảo, không cộng vào số dư.</div>`;
   }
   function txSheet(t) {
     if (!L.ledgerReady(S)) { toast('Hãy thiết lập sổ tài chính trước'); tab = 'accounts'; render(true); return; }
@@ -1077,6 +1090,15 @@
   };
 
   A['set-theme'] = el => { applyTheme(el.dataset.t); render(); };
+  A['ack-excluded'] = () => {
+    if (!S.capital) return;
+    S.capital.ack = L.grabExcluded(S).n; // đã hiểu: không nhắc nữa cho tới khi có thêm ca bị loại
+    save(); render(); toast('Ok, mình sẽ không nhắc lại');
+  };
+  A['pick-when'] = el => {
+    $('#f-when').value = el.dataset.w;
+    $('#whenseg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el));
+  };
 
   // ---- Sổ tài chính: điều hướng
   A.gsub = el => { gsub = el.dataset.s; render(true); };
@@ -1092,19 +1114,22 @@
     const date = val('f-date');
     if (!date) return setErr('Chọn ngày bắt đầu sổ.');
     if (date > L.todayKey()) return setErr('Ngày bắt đầu không được ở tương lai.');
-    S.ledger.start = date; save(); render(); toast('Đã bắt đầu sổ tài chính. Giờ hãy thêm các tài khoản của bạn.');
+    S.ledger.start = date; S.ledger.when = val('f-when') === 'start' ? 'start' : 'end';
+    save(); render(); toast('Đã bắt đầu sổ tài chính. Giờ hãy thêm các tài khoản của bạn.');
   };
   A['edit-start'] = () => {
     openSheet('Sửa ngày bắt đầu sổ', `
       <div class="alert bad" style="margin:0 0 12px"><div>⚠️ Chỉ các giao dịch <b>sau</b> ngày bắt đầu được cộng vào số dư; giao dịch từ ngày này trở về trước chỉ để tham khảo. Số dư đầu kỳ của từng tài khoản phải là số dư <b>tại ngày bắt đầu</b>. Đổi ngày sẽ làm số dư các tài khoản thay đổi theo.</div></div>
       ${dateField('f-date', 'Ngày bắt đầu sổ', S.ledger.start)}
+      ${whenSeg(S.ledger.when)}
       <div class="err" id="err"></div>
       <button class="btn primary lg" data-act="save-start">Lưu</button>`);
   };
   A['save-start'] = () => {
     const date = val('f-date');
     if (!date || date > L.todayKey()) return setErr('Ngày bắt đầu không hợp lệ.');
-    S.ledger.start = date; save(); closeSheet(); render(); toast('Đã đổi ngày bắt đầu sổ');
+    S.ledger.start = date; S.ledger.when = val('f-when') === 'start' ? 'start' : 'end';
+    save(); closeSheet(); render(); toast('Đã đổi ngày bắt đầu sổ');
   };
 
   // ---- Sổ tài chính: tài khoản
@@ -1136,7 +1161,7 @@
     if (!a) return;
     if (isNaN(actual)) return setErr('Nhập số dư thực tế.');
     const today = L.todayKey();
-    if (today <= S.ledger.start) return setErr('Ngày hôm nay phải sau ngày bắt đầu sổ.');
+    if (!L.ledgerCounts(S, today)) return setErr('Hôm nay chưa nằm trong phần sổ được tính (hãy sửa ngày bắt đầu sổ hoặc chọn "Đầu ngày").');
     const diff = actual - L.accountBalances(S).byId[a.id];
     if (diff === 0) { closeSheet(); toast('Số dư đã khớp'); return; }
     S.tx.push({ id: uid(), date: today, type: diff > 0 ? 'income' : 'expense', amount: Math.abs(diff), acct: a.id, cat: 'Điều chỉnh số dư', note: '', adj: true });
@@ -1182,8 +1207,8 @@
       S.ledger.lastAcct = acct;
     }
     // Tiền Grab có mốc riêng (ngày chốt vốn Grab): giao dịch dính Tiền Grab phải sau mốc đó mới tính được
-    if (S.capital && date > S.ledger.start && date <= S.capital.date && (rec.acct === GRAB || rec.to === GRAB)) {
-      return setErr(`Giao dịch dùng "Tiền Grab" phải sau ngày chốt vốn Grab (${dmOf(S.capital.date)}).`);
+    if (S.capital && L.ledgerCounts(S, date) && !L.countsAfter(S.capital.date, S.capital.when, date) && (rec.acct === GRAB || rec.to === GRAB)) {
+      return setErr(`Giao dịch dùng "Tiền Grab" phải nằm sau mốc vốn Grab (${dmOf(S.capital.date)}, ${whenLabel(S.capital.when)}).`);
     }
     if (el.dataset.id) { const t = S.tx.find(x => x.id === el.dataset.id); Object.assign(t, rec); if (type !== 'transfer') delete t.to; }
     else S.tx.push(Object.assign({ id: uid() }, rec));
@@ -1252,7 +1277,7 @@
     if (!date) return setErr('Chọn ngày chốt.');
     if (isNaN(total)) return setErr('Nhập tổng vốn ban đầu.');
     if (fund > total) return setErr('Phần để dành cho sửa xe không thể lớn hơn tổng vốn.');
-    S.capital = { date, total, fund };
+    S.capital = { date, total, fund, when: val('f-when') === 'start' ? 'start' : 'end' };
     save(); closeSheet(); render(); toast('Đã lưu vốn ban đầu');
   };
   A['del-capital'] = () => {
@@ -1495,6 +1520,12 @@
   // Cài đặt: lưu khi đổi
   document.addEventListener('change', e => {
     const t = e.target;
+    // Chọn ngày là hôm nay thì gợi ý "Đầu ngày" (sắp chạy/ghi tiếp trong ngày), ngày khác thì "Cuối ngày"
+    if (t.id === 'f-date' && $('#whenseg')) {
+      const w = t.value === L.todayKey() ? 'start' : 'end';
+      $('#f-when').value = w;
+      $('#whenseg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.w === w));
+    }
     if (t.dataset && t.dataset.lock !== undefined) { // thời gian tự khoá
       S.settings.lockMinutes = Number(t.value); save(); toast('Đã lưu cài đặt');
       return;

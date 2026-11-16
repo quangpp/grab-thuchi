@@ -303,7 +303,7 @@
   function cashPosition(s) {
     const cap = s.capital;
     if (!cap) return null;
-    const after = k => k > cap.date;
+    const after = k => countsAfter(cap.date, cap.when, k);
     const p = {
       cap: cap.total || 0, income: 0, fuelAccr: 0, wearAccr: 0,
       fuelPaid: 0, repairPaid: 0, repairFromFund: 0, putIn: 0, rideExp: 0, personal: 0, saved: 0, adjust: 0,
@@ -332,7 +332,7 @@
     p.ledgerNet = 0;
     s.tx.forEach(t => {
       // Giao dịch trước hoặc đúng ngày bắt đầu sổ chỉ để tham khảo, không cộng vào số dư (nhất quán với các tài khoản khác)
-      if (!after(t.date) || (s.ledger && s.ledger.start && t.date <= s.ledger.start)) return;
+      if (!after(t.date) || (s.ledger && s.ledger.start && !countsAfter(s.ledger.start, s.ledger.when, t.date))) return;
       if (t.type === 'income' && t.acct === GRAB_ACCT) p.ledgerNet += t.amount;
       else if (t.type === 'expense' && t.acct === GRAB_ACCT) p.ledgerNet -= t.amount;
       else if (t.type === 'transfer') {
@@ -353,6 +353,10 @@
 
   // ---------- Sổ tài chính: tài khoản, số dư, giao dịch ----------
   function ledgerReady(s) { return !!(s.ledger && s.ledger.start); }
+  // Mốc ngày có hai kiểu: "cuối ngày" (mặc định: số dư đã gồm mọi thứ của ngày đó, chỉ tính các khoản SAU ngày đó) và
+  // "đầu ngày" (số dư là lúc chưa phát sinh gì trong ngày đó, nên các khoản của CHÍNH ngày đó cũng được cộng).
+  function countsAfter(date, when, k) { return when === 'start' ? k >= date : k > date; }
+  function ledgerCounts(s, k) { return ledgerReady(s) && countsAfter(s.ledger.start, s.ledger.when, k); }
 
   // "Tiền Grab" khi CHƯA nhập vốn Grab: coi như vốn 0 tại ngày trước bản ghi Grab đầu tiên (ca, xăng, bảo dưỡng, chi phí,
   // giao dịch dính Tiền Grab), để thu nhập Grab đã nhập vẫn được cộng vào tổng tài sản.
@@ -375,7 +379,7 @@
     if (!cap) return r;
     const model = fuelModel(s);
     s.shifts.forEach(sh => {
-      if (dateKey(new Date(sh.start)) <= cap.date) { r.n++; r.income += shiftCalc(sh, s, model).income; }
+      if (!countsAfter(cap.date, cap.when, dateKey(new Date(sh.start)))) { r.n++; r.income += shiftCalc(sh, s, model).income; }
     });
     return r;
   }
@@ -407,7 +411,7 @@
     const byId = {};
     s.accounts.forEach(a => { byId[a.id] = Number(a.opening) || 0; });
     s.tx.forEach(t => {
-      if (start && t.date <= start) return;
+      if (start && !countsAfter(start, s.ledger.when, t.date)) return;
       if (t.type === 'income') { if (t.acct in byId) byId[t.acct] += t.amount; }
       else if (t.type === 'expense') { if (t.acct in byId) byId[t.acct] -= t.amount; }
       else if (t.type === 'transfer') {
@@ -505,7 +509,7 @@
 
   const api = {
     DEFAULT_SETTINGS, CATS, TYPE_LABEL, MAINT_ITEMS, TX_CATS, ACCT_KINDS, GRAB_ACCT,
-    ledgerReady, accountBalances, unifiedEntries, periodReport, grabPot, grabExcluded, implicitCapital, mergeState,
+    ledgerReady, countsAfter, ledgerCounts, accountBalances, unifiedEntries, periodReport, grabPot, grabExcluded, implicitCapital, mergeState,
     emptyState, migrate, dateKey, keyToDate, todayKey,
     lastKnownOdo, fuelModel, fuelRate, priceOn, litersOf, fuelPriceStatus, shiftCalc,
     dayRange, weekRange, monthRange, allRange, rangeFor, summarize, series,
