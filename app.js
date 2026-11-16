@@ -689,6 +689,7 @@
       sub = [acctName(e.acct), e.note].filter(Boolean).join(' · ');
       amt = (e.type === 'income' ? '+' : '−') + fmtMoney(e.amount); cls = e.type === 'income' ? 'pos' : 'neg';
     }
+    if (e.src === 'tx' && S.ledger.start && e.date <= S.ledger.start) sub += (sub ? ' · ' : '') + 'chỉ tham khảo, không tính vào số dư';
     return `<button class="row" data-act="${act}" data-id="${e.id}"><div class="l"><b>${esc(title)}</b><span class="muted">${esc(sub)}</span></div><div class="amt ${cls}">${amt}</div></button>`;
   }
 
@@ -700,7 +701,7 @@
     if (!ready) {
       html += `<section class="card"><div class="eyebrow">Sổ tài chính</div>
         <h2 style="margin-top:6px">Bắt đầu sổ tài chính</h2>
-        <p class="muted small" style="margin:0 0 4px">Thiết lập ngày chốt và số dư đầu kỳ của các tài khoản (ví, ngân hàng...). Từ đó lương, chi tiêu, chuyển khoản và thu nhập Grab đều tự liên thông với nhau.</p>
+        <p class="muted small" style="margin:0 0 4px">Chọn ngày bắt đầu sổ và nhập số dư hiện có của các tài khoản (ví, ngân hàng...). Từ đó lương, chi tiêu, chuyển khoản và thu nhập Grab đều tự liên thông với nhau, dùng được lâu dài.</p>
         <button class="btn primary lg" data-act="tab" data-tab="accounts">Thiết lập ngay</button></section>`;
     } else {
       const b = L.accountBalances(S);
@@ -753,9 +754,9 @@
     if (!L.ledgerReady(S)) {
       const def = S.capital ? S.capital.date : L.lastDayOfPrevMonth();
       return `<section class="card"><div class="eyebrow">Sổ tài chính</div>
-        <h2 style="margin-top:6px">Bước 1: chọn ngày chốt sổ</h2>
-        <p class="muted small" style="margin:0 0 10px">Số dư đầu kỳ của các tài khoản sẽ tính tới hết ngày này; các giao dịch từ ngày hôm sau mới được cộng hoặc trừ. Bạn không cần nhập lại dữ liệu trước ngày chốt.</p>
-        ${dateField('f-date', 'Ngày chốt sổ', def)}
+        <h2 style="margin-top:6px">Bước 1: chọn ngày bắt đầu sổ</h2>
+        <p class="muted small" style="margin:0 0 10px">Đây là <b>điểm bắt đầu</b>, không phải ngày kết thúc: sổ chạy tiếp mãi từ ngày này, bạn chỉ đặt một lần. Số dư bạn nhập cho từng tài khoản là số dư <b>tại ngày này</b>; các giao dịch từ ngày hôm sau được cộng hoặc trừ dần. Bạn không cần nhập lại dữ liệu cũ hơn.</p>
+        ${dateField('f-date', 'Ngày bắt đầu sổ', def)}
         <div class="err" id="err"></div>
         <button class="btn primary lg" data-act="ledger-start">Bắt đầu</button></section>`;
     }
@@ -763,16 +764,16 @@
     const list = S.accounts.map(a => `<button class="row" data-act="edit-account" data-id="${a.id}"><div class="l"><b>${esc(a.name)}</b><span class="muted">${L.ACCT_KINDS[a.kind] || 'Khác'}</span></div><div class="amt ${b.byId[a.id] < 0 ? 'neg' : ''}">${fmtMoney(b.byId[a.id])}</div></button>`).join('');
     const grabRow = `<button class="row" data-act="goto-pot"><div class="l"><b>Tiền Grab</b><span class="muted">${b.grab == null ? 'Chưa thiết lập vốn Grab (mục Grab → Tiền Grab)' : 'Lấy từ mục Grab, bấm để xem chi tiết'}</span></div><div class="amt">${b.grab == null ? '—' : fmtMoney(b.grab)}</div></button>`;
     return `<section class="card"><div class="eyebrow">Tổng tài sản</div><div class="big ${b.total < 0 ? 'neg' : ''}">${fmtMoney(b.total)}</div>
-        <div class="muted small">Số dư đầu kỳ chốt ngày ${dmOf(S.ledger.start)}.</div>
+        <div class="muted small">Sổ bắt đầu từ ngày ${dmOf(S.ledger.start)}, chạy tiếp lâu dài.</div>
         <button class="btn primary lg" data-act="add-account">＋ Thêm tài khoản</button></section>
       <section class="card tight"><div class="group-h">Tài khoản</div>${list || '<div class="empty">Chưa có tài khoản nào. Thêm ví tiền mặt, tài khoản ngân hàng...</div>'}${grabRow}</section>
-      <button class="link" data-act="edit-start">Sửa ngày chốt sổ</button>`;
+      <button class="link" data-act="edit-start">Sửa ngày bắt đầu sổ</button>`;
   }
 
-  const GSUBS = [['shift', 'Ca chạy'], ['report', 'Báo cáo'], ['pot', 'Tiền Grab'], ['car', 'Xe']];
+  const GSUBS = [['shift', 'Ca chạy'], ['report', 'Báo cáo'], ['pot', 'Tiền Grab'], ['car', 'Xe'], ['settings', 'Thông số']];
   function viewGrab() {
-    const nav = `<div class="seg" style="margin-bottom:14px">${GSUBS.map(g => `<button class="${gsub === g[0] ? 'on' : ''}" data-act="gsub" data-s="${g[0]}">${g[1]}</button>`).join('')}</div>`;
-    return nav + ({ shift: viewShift, report: viewGrabReport, pot: viewSpend, car: viewCar })[gsub]();
+    const nav = `<div class="seg gseg" style="margin-bottom:14px">${GSUBS.map(g => `<button class="${gsub === g[0] ? 'on' : ''}" data-act="gsub" data-s="${g[0]}">${g[1]}</button>`).join('')}</div>`;
+    return nav + ({ shift: viewShift, report: viewGrabReport, pot: viewSpend, car: viewCar, settings: viewGrabSettings })[gsub]();
   }
 
   // ---- Sheet: tài khoản
@@ -784,7 +785,7 @@
       <label class="l">Loại</label>
       <div class="chips" id="kchips">${Object.keys(L.ACCT_KINDS).map(k => `<button type="button" class="chip ${k === kind ? 'on' : ''}" data-act="pick-kind" data-k="${k}">${L.ACCT_KINDS[k]}</button>`).join('')}</div>
       <input type="hidden" id="f-kind" value="${kind}">
-      ${moneyField('f-open', `Số dư tại ngày chốt (${dmOf(S.ledger.start)})`, a ? a.opening : '', { focus: !a })}
+      ${moneyField('f-open', `Số dư tại ngày bắt đầu sổ (${dmOf(S.ledger.start)})`, a ? a.opening : '', { focus: !a })}
       <div class="err" id="err"></div>
       <button class="btn primary lg" data-act="save-account" data-id="${a ? a.id : ''}">${a ? 'Lưu thay đổi' : 'Thêm tài khoản'}</button>
       ${a ? `<div class="card" style="margin:14px 0 0;background:var(--bg);box-shadow:none">
@@ -822,7 +823,8 @@
         <input type="hidden" id="f-cat" value="${esc(sel)}">
         ${textField('f-cat2', 'Hoặc gõ danh mục khác', '', 'vd: Học phí, Sửa nhà...')}`;
     }
-    return body + textField('f-note', 'Ghi chú (tuỳ chọn)', note, '') + dateField('f-date', 'Ngày', date);
+    return body + textField('f-note', 'Ghi chú (tuỳ chọn)', note, '') + dateField('f-date', 'Ngày', date)
+      + `<div class="hint" style="margin:-6px 0 10px">Ngày từ ${dmOf(S.ledger.start)} trở về trước (ngày bắt đầu sổ) chỉ để tham khảo, không cộng vào số dư.</div>`;
   }
   function txSheet(t) {
     if (!L.ledgerReady(S)) { toast('Hãy thiết lập sổ tài chính trước'); tab = 'accounts'; render(true); return; }
@@ -903,9 +905,9 @@
   }
 
   // ---------------------------------------------------------------- màn hình: CÀI ĐẶT
-  function viewSettings() {
+  // Thông số riêng cho Grab (nằm trong mục Grab → Thông số)
+  function viewGrabSettings() {
     const st = S.settings;
-    const last = S.lastBackup ? new Date(S.lastBackup).toLocaleString('vi-VN') : 'chưa có';
     const nField = (key, label, v, suf, cls, hint) => `<div class="fld"><label>${label}</label><div class="inwrap noK"><input class="${cls}" data-setting="${key}" inputmode="${cls === 'dec' ? 'decimal' : 'numeric'}" value="${cls === 'dec' ? String(v).replace('.', ',') : fmtInt(v)}"><span class="suf">${suf}</span></div>${hint ? `<div class="hint">${hint}</div>` : ''}</div>`;
     return `<section class="card"><h2>Thông số xe</h2>
         ${nField('baseOdo', 'Odo ban đầu', st.baseOdo, 'km', 'int', 'Mốc khởi đầu, nhập odo hiện tại của xe nếu chưa có. Các lần nhập odo sau sẽ thay thế.')}
@@ -914,17 +916,21 @@
         ${nField('wearPerKm', 'Hao mòn xe', st.wearPerKm, 'đ/km', 'int', 'Nhớt + lốp + phanh + sên nhông... Mặc định 240đ/km, chỉnh theo thực tế (giá nhớt, lốp... ở tiệm của bạn).')}
         ${nField('oilInterval', 'Chu kỳ thay nhớt', st.oilInterval, 'km', 'int')}
       </section>
-      ${securityCard()}
+      <section class="card"><h2>Cách tính</h2><div class="muted small" style="line-height:1.55">
+        <b>Xăng của ca</b> = km × mức tiêu hao (lít/100km) × giá xăng của ngày chạy.<br>
+        <b>Hao mòn</b> = km × đơn giá hao mòn, bỏ vào quỹ bảo trì.<br>
+        <b>Lãi ca</b> = thu ròng app + tip/thưởng − xăng − hao mòn.<br>
+        Hóa đơn xăng và bảo dưỡng không cộng thẳng vào chi phí lãi (đã tính theo km); chúng dùng để học mức tiêu hao và là tiền thật ra khỏi túi ở "Tiền Grab" và sổ tài chính.</div></section>`;
+  }
+
+  function viewSettings() {
+    const last = S.lastBackup ? new Date(S.lastBackup).toLocaleString('vi-VN') : 'chưa có';
+    return `${securityCard()}
       <section class="card"><h2>Sao lưu dữ liệu</h2>
         <p class="muted small" style="margin:0 0 10px">Dữ liệu chỉ lưu trên điện thoại này. Hãy sao lưu thường xuyên (lưu file vào Files/iCloud). Lần cuối: <b>${last}</b>.${vaultKey ? ' File xuất ra được <b>mã hoá bằng mật khẩu hiện tại</b>; muốn mở lại phải nhớ mật khẩu đó.' : ''}</p>
         <div class="btn-row"><button class="btn" data-act="export">⬆︎ Xuất file</button><button class="btn" data-act="import">⬇︎ Nhập file</button></div>
         ${vaultKey ? '<button class="link" data-act="export-plain">Xuất file không mã hoá (không khuyến nghị)</button>' : ''}
-        <button class="link danger" data-act="wipe">Xoá toàn bộ dữ liệu</button></section>
-      <section class="card"><h2>Cách tính</h2><div class="muted small" style="line-height:1.55">
-        <b>Lãi ca</b> = thu ròng app + thưởng/tip − km × (xăng/km + hao mòn/km).<br>
-        <b>Lợi nhuận chạy xe</b> = tổng lãi các ca − chi phí chạy xe khác.<br>
-        <b>Còn lại</b> = lợi nhuận − chi tiêu cá nhân − để dành.<br>
-        Hóa đơn xăng và bảo dưỡng không cộng thẳng vào chi phí (đã tính theo km) — chỉ dùng để tool học đơn giá chính xác.</div></section>`;
+        <button class="link danger" data-act="wipe">Xoá toàn bộ dữ liệu</button></section>`;
   }
 
   // ---------------------------------------------------------------- dựng màn hình
@@ -1056,24 +1062,24 @@
   A['led-next'] = () => { if (ledOff < 0) { ledOff++; render(); } };
   A['led-filter'] = el => { ledFilter = el.dataset.f; render(); };
 
-  // ---- Sổ tài chính: ngày chốt
+  // ---- Sổ tài chính: ngày bắt đầu sổ
   A['ledger-start'] = () => {
     const date = val('f-date');
-    if (!date) return setErr('Chọn ngày chốt sổ.');
-    if (date > L.todayKey()) return setErr('Ngày chốt không được ở tương lai.');
+    if (!date) return setErr('Chọn ngày bắt đầu sổ.');
+    if (date > L.todayKey()) return setErr('Ngày bắt đầu không được ở tương lai.');
     S.ledger.start = date; save(); render(); toast('Đã bắt đầu sổ tài chính. Giờ hãy thêm các tài khoản của bạn.');
   };
   A['edit-start'] = () => {
-    openSheet('Sửa ngày chốt sổ', `
-      <div class="alert bad" style="margin:0 0 12px"><div>⚠️ Chỉ các giao dịch <b>sau</b> ngày chốt được tính vào số dư. Đổi ngày sẽ làm số dư các tài khoản thay đổi theo.</div></div>
-      ${dateField('f-date', 'Ngày chốt sổ', S.ledger.start)}
+    openSheet('Sửa ngày bắt đầu sổ', `
+      <div class="alert bad" style="margin:0 0 12px"><div>⚠️ Chỉ các giao dịch <b>sau</b> ngày bắt đầu được cộng vào số dư; giao dịch từ ngày này trở về trước chỉ để tham khảo. Số dư đầu kỳ của từng tài khoản phải là số dư <b>tại ngày bắt đầu</b>. Đổi ngày sẽ làm số dư các tài khoản thay đổi theo.</div></div>
+      ${dateField('f-date', 'Ngày bắt đầu sổ', S.ledger.start)}
       <div class="err" id="err"></div>
       <button class="btn primary lg" data-act="save-start">Lưu</button>`);
   };
   A['save-start'] = () => {
     const date = val('f-date');
-    if (!date || date > L.todayKey()) return setErr('Ngày chốt không hợp lệ.');
-    S.ledger.start = date; save(); closeSheet(); render(); toast('Đã đổi ngày chốt');
+    if (!date || date > L.todayKey()) return setErr('Ngày bắt đầu không hợp lệ.');
+    S.ledger.start = date; save(); closeSheet(); render(); toast('Đã đổi ngày bắt đầu sổ');
   };
 
   // ---- Sổ tài chính: tài khoản
@@ -1086,7 +1092,7 @@
   A['save-account'] = el => {
     const name = val('f-name'), opening = getInt('f-open');
     if (!name) return setErr('Nhập tên tài khoản.');
-    if (isNaN(opening)) return setErr('Nhập số dư tại ngày chốt (nhập 0 nếu chưa có tiền).');
+    if (isNaN(opening)) return setErr('Nhập số dư tại ngày bắt đầu sổ (nhập 0 nếu chưa có tiền).');
     if (S.accounts.some(a => a.name.toLowerCase() === name.toLowerCase() && a.id !== el.dataset.id)) return setErr('Đã có tài khoản trùng tên.');
     const data = { name, kind: val('f-kind') || 'other', opening };
     if (el.dataset.id) Object.assign(S.accounts.find(x => x.id === el.dataset.id), data);
@@ -1105,7 +1111,7 @@
     if (!a) return;
     if (isNaN(actual)) return setErr('Nhập số dư thực tế.');
     const today = L.todayKey();
-    if (today <= S.ledger.start) return setErr('Ngày hôm nay phải sau ngày chốt sổ.');
+    if (today <= S.ledger.start) return setErr('Ngày hôm nay phải sau ngày bắt đầu sổ.');
     const diff = actual - L.accountBalances(S).byId[a.id];
     if (diff === 0) { closeSheet(); toast('Số dư đã khớp'); return; }
     S.tx.push({ id: uid(), date: today, type: diff > 0 ? 'income' : 'expense', amount: Math.abs(diff), acct: a.id, cat: 'Điều chỉnh số dư', note: '', adj: true });
@@ -1137,7 +1143,7 @@
   A['save-tx'] = el => {
     const type = txType, amount = getInt('f-amt'), date = val('f-date') || L.todayKey(), note = val('f-note');
     if (isNaN(amount) || amount <= 0) return setErr('Nhập số tiền.');
-    if (date <= S.ledger.start) return setErr(`Ngày phải sau ngày chốt sổ (${dmOf(S.ledger.start)}).`);
+    // Ngày trước hoặc đúng ngày bắt đầu sổ vẫn được ghi (để tham khảo) nhưng không cộng vào số dư
     let rec;
     if (type === 'transfer') {
       const from = val('f-from'), to = val('f-to');
@@ -1149,6 +1155,11 @@
       if (!acct) return setErr('Chọn tài khoản.');
       rec = { type, amount, acct, cat: val('f-cat2') || val('f-cat') || 'Khác', note, date };
       S.ledger.lastAcct = acct;
+    }
+    // Tiền Grab có mốc riêng (ngày chốt vốn Grab): giao dịch dính Tiền Grab phải sau mốc đó mới tính được
+    const pos = L.cashPosition(S);
+    if (pos && date > S.ledger.start && date <= S.capital.date && (rec.acct === GRAB || rec.to === GRAB)) {
+      return setErr(`Giao dịch dùng "Tiền Grab" phải sau ngày chốt vốn Grab (${dmOf(S.capital.date)}).`);
     }
     if (el.dataset.id) { const t = S.tx.find(x => x.id === el.dataset.id); Object.assign(t, rec); if (type !== 'transfer') delete t.to; }
     else S.tx.push(Object.assign({ id: uid() }, rec));

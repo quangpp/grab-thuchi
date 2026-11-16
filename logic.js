@@ -331,7 +331,8 @@
     // Giao dịch ở sổ tài chính có dính "Tiền Grab" (chi từ tiền Grab, rút về ngân hàng, nạp thêm...)
     p.ledgerNet = 0;
     s.tx.forEach(t => {
-      if (!after(t.date)) return;
+      // Giao dịch trước hoặc đúng ngày bắt đầu sổ chỉ để tham khảo, không cộng vào số dư (nhất quán với các tài khoản khác)
+      if (!after(t.date) || (s.ledger && s.ledger.start && t.date <= s.ledger.start)) return;
       if (t.type === 'income' && t.acct === GRAB_ACCT) p.ledgerNet += t.amount;
       else if (t.type === 'expense' && t.acct === GRAB_ACCT) p.ledgerNet -= t.amount;
       else if (t.type === 'transfer') {
