@@ -549,7 +549,8 @@
         const bal = debtBalance(s, d);
         if (bal > 0) {
           const k = nextMonthly(today, d.dueDay);
-          if (k <= to) items.push({ kind: 'card', id: d.id, date: k, title: 'Thanh toán thẻ ' + d.name, amount: bal, overdue: false });
+          // Đã trả thẻ cho kỳ đến hạn này rồi thì không nhắc nữa (xem paidDue)
+          if (k <= to && !(d.paidDue && d.paidDue >= k)) items.push({ kind: 'card', id: d.id, date: k, title: 'Thanh toán thẻ ' + d.name, amount: bal, overdue: false });
         }
       }
     });

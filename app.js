@@ -1522,6 +1522,14 @@
       if (type === 'debtpay') { const d = debtOf(rec.debt); if (d && d.kind === 'loan') { const row = L.loanSchedule(S, d, 1)[0]; if (row && date >= L.addDays(row.cut, -10)) adv = d; } }
       const tx = Object.assign({ id }, rec);
       if (adv) { (adv.adv = adv.adv || []).push({ tx: id, nextDue: adv.nextDue, lastPaid: adv.lastPaid || null }); adv.lastPaid = date; adv.nextDue = L.loanDue(adv, 1); }
+      // Trả thẻ trong khoảng 10 ngày trước tới 3 ngày sau ngày đến hạn: coi là đã trả kỳ đó, hết nhắc
+      if (type === 'debtpay') {
+        const cd = debtOf(rec.debt);
+        if (cd && cd.kind === 'card' && cd.dueDay) {
+          const k = L.nextMonthly(L.addDays(date, -3), cd.dueDay), gap = L.daysBetween(date, k);
+          if (gap <= 10 && gap >= -3) { (cd.paidStack = cd.paidStack || []).push({ tx: id, prev: cd.paidDue || null }); cd.paidDue = k; }
+        }
+      }
       // Ghi từ "Sắp đến hạn" cho khoản định kỳ: đánh dấu đã xử lý tới ngày đó
       if (txCtx && txCtx.recur) { const r = S.recurring.find(x => x.id === txCtx.recur); if (r) { tx.rec = r.id; tx.recDate = txCtx.date; tx.recPrev = r.doneUpTo || null; r.doneUpTo = txCtx.date; } }
       S.tx.push(tx);
@@ -1533,6 +1541,7 @@
     if (!confirm('Xoá giao dịch này?')) return;
     const t = S.tx.find(x => x.id === el.dataset.id);
     if (t) { // hoàn lại kỳ trả nợ / mốc định kỳ nếu giao dịch này là cái vừa làm các mốc đó dời đi
+      if (t.type === 'debtpay') { const cd = debtOf(t.debt); if (cd && cd.paidStack) { const i = cd.paidStack.findIndex(a => a.tx === t.id); if (i >= 0 && i === cd.paidStack.length - 1) { const a = cd.paidStack.pop(); if (a.prev) cd.paidDue = a.prev; else delete cd.paidDue; } } }
       if (t.type === 'debtpay') { const d = debtOf(t.debt); if (d && d.adv) { const i = d.adv.findIndex(a => a.tx === t.id); if (i >= 0 && i === d.adv.length - 1) { const a = d.adv.pop(); d.nextDue = a.nextDue; if (a.lastPaid) d.lastPaid = a.lastPaid; else delete d.lastPaid; } } }
       if (t.rec) { const r = S.recurring.find(x => x.id === t.rec); if (r && r.doneUpTo === t.recDate) r.doneUpTo = t.recPrev || undefined; }
     }
