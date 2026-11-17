@@ -9,6 +9,7 @@
     fuelL100: 2.2,      // lít / 100 km (mặc định cho tới khi học được từ các lần đổ xăng)
     wearPerKm: 240,     // đ/km hao mòn (nhớt, lốp, phanh, sên nhông...)
     oilInterval: 2000,  // km giữa hai lần thay nhớt
+    remindDays: 3,      // nhắc trước bao nhiêu ngày khi khoản nợ/định kỳ đến hạn
     lockMinutes: 5,     // tự khoá khi rời app quá số phút này (0 = khoá ngay khi thoát app); chỉ có tác dụng khi đã đặt mật khẩu
   };
 
@@ -44,7 +45,9 @@
       // Sổ tài chính cá nhân
       ledger: { start: null, lastAcct: null }, // start = ngày chốt (số dư đầu kỳ tính tới hết ngày này)
       accounts: [],      // { id,name,kind,opening } — kind: cash | bank | wallet | other
-      tx: [],            // { id,date,type:'income'|'expense'|'transfer',amount,acct,to,cat,note,adj }
+      tx: [],            // { id,date,type:'income'|'expense'|'transfer'|'debtpay',amount,acct,to,cat,note,adj,debt,principal,interest }
+      debts: [],         // khoản nợ: kind 'loan' (vay trả góp) | 'card' (thẻ tín dụng), xem tạo ở debtSheet
+      recurring: [],     // khoản định kỳ hằng tháng: { id,name,type:'income'|'expense',amount,days:[5,15],acct,cat,note,active,doneUpTo }
       lastBackup: null,
     };
   }
@@ -52,7 +55,7 @@
   function migrate(o) {
     const s = Object.assign(emptyState(), o || {});
     s.settings = Object.assign({}, DEFAULT_SETTINGS, (o && o.settings) || {});
-    ['shifts', 'fills', 'expenses', 'maint', 'odoLog', 'checks', 'adjusts', 'fundPuts', 'priceLog', 'accounts', 'tx'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
+    ['shifts', 'fills', 'expenses', 'maint', 'odoLog', 'checks', 'adjusts', 'fundPuts', 'priceLog', 'accounts', 'tx', 'debts', 'recurring'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
     if (!s.ledger || typeof s.ledger !== 'object') s.ledger = { start: null, lastAcct: null };
     // Dữ liệu cũ: giá xăng đã xác nhận trước đây trở thành mốc đầu tiên của nhật ký giá
     if (!s.priceLog.length && s.settings.fuelPriceDate && s.settings.fuelPrice > 0) {
@@ -335,6 +338,7 @@
       if (!after(t.date) || (s.ledger && s.ledger.start && !countsAfter(s.ledger.start, s.ledger.when, t.date))) return;
       if (t.type === 'income' && t.acct === GRAB_ACCT) p.ledgerNet += t.amount;
       else if (t.type === 'expense' && t.acct === GRAB_ACCT) p.ledgerNet -= t.amount;
+      else if (t.type === 'debtpay' && t.acct === GRAB_ACCT) p.ledgerNet -= t.amount;
       else if (t.type === 'transfer') {
         if (t.acct === GRAB_ACCT) p.ledgerNet -= t.amount;
         if (t.to === GRAB_ACCT) p.ledgerNet += t.amount;
@@ -391,7 +395,7 @@
   }
 
   // Gộp dữ liệu từ file vào dữ liệu hiện tại: giữ nguyên mọi thứ đang có, chỉ thêm các mục chưa có (theo id)
-  const MERGE_KEYS = ['shifts', 'fills', 'expenses', 'maint', 'odoLog', 'checks', 'adjusts', 'fundPuts', 'priceLog', 'accounts', 'tx'];
+  const MERGE_KEYS = ['shifts', 'fills', 'expenses', 'maint', 'odoLog', 'checks', 'adjusts', 'fundPuts', 'priceLog', 'accounts', 'tx', 'debts', 'recurring'];
   function mergeState(cur, inc) {
     const a = migrate(JSON.parse(JSON.stringify(cur))), b = migrate(JSON.parse(JSON.stringify(inc)));
     const added = {};
@@ -414,6 +418,7 @@
       if (start && !countsAfter(start, s.ledger.when, t.date)) return;
       if (t.type === 'income') { if (t.acct in byId) byId[t.acct] += t.amount; }
       else if (t.type === 'expense') { if (t.acct in byId) byId[t.acct] -= t.amount; }
+      else if (t.type === 'debtpay') { if (t.acct in byId) byId[t.acct] -= t.amount; }
       else if (t.type === 'transfer') {
         if (t.acct in byId) byId[t.acct] -= t.amount;
         if (t.to in byId) byId[t.to] += t.amount;
@@ -422,7 +427,162 @@
     const pos = grabPot(s);
     const grab = pos ? pos.expected : null;
     const total = Object.keys(byId).reduce((a, k) => a + byId[k], 0) + (grab || 0);
-    return { byId, grab, total, grabImplicit: !s.capital && grab != null };
+    // Nợ: tổng dư nợ các khoản vay và thẻ. Tài sản ròng = tài sản − nợ.
+    const debts = {};
+    let debtTotal = 0;
+    s.debts.forEach(d => { debts[d.id] = debtBalance(s, d); debtTotal += debts[d.id]; });
+    return { byId, grab, total, debts, debtTotal, net: total - debtTotal, grabImplicit: !s.capital && grab != null };
+  }
+
+  // ---------- Nợ: khoản vay trả góp và thẻ tín dụng ----------
+  // Dư nợ hiện tại = dư nợ đầu kỳ (tại ngày/mốc của khoản nợ) ± các giao dịch sau mốc đó:
+  // trả nợ (giảm phần gốc), quẹt thẻ (tăng), hoàn tiền về thẻ (giảm).
+  function debtBalance(s, d) {
+    let b = Number(d.opening) || 0;
+    s.tx.forEach(t => {
+      if (!countsAfter(d.asOf, d.when, t.date)) return;
+      if (t.type === 'debtpay' && t.debt === d.id) b -= (t.principal != null ? t.principal : t.amount);
+      else if (t.type === 'expense' && t.acct === d.id) b += t.amount;
+      else if (t.type === 'income' && t.acct === d.id) b -= t.amount;
+    });
+    return b;
+  }
+
+  // Tiện ích ngày
+  function addDays(k, n) { const d = keyToDate(k); d.setDate(d.getDate() + n); return dateKey(d); }
+  function daysBetween(a, b) { return Math.round((keyToDate(b) - keyToDate(a)) / 864e5); }
+  function monthDay(y, m0, day) { // ngày `day` của tháng m0 (tự dời nếu tháng ngắn hơn)
+    const last = new Date(y, m0 + 1, 0).getDate();
+    return dateKey(new Date(y, m0, Math.min(day, last), 12));
+  }
+  function shiftWeekend(k) { // ngân hàng cắt tiền vào thứ Hai nếu ngày trả rơi vào thứ Bảy/Chủ nhật
+    const d = keyToDate(k), w = d.getDay();
+    if (w === 6) d.setDate(d.getDate() + 2); else if (w === 0) d.setDate(d.getDate() + 1);
+    return dateKey(d);
+  }
+  function nextMonthly(from, day) { // ngày `day` gần nhất từ `from` trở đi (cùng tháng hoặc tháng sau)
+    const f = keyToDate(from);
+    let k = monthDay(f.getFullYear(), f.getMonth(), day);
+    if (k < from) k = monthDay(f.getFullYear(), f.getMonth() + 1, day);
+    return k;
+  }
+
+  // Khoản vay: nextDue = ngày trả kỳ tới (chưa dời cuối tuần), dueDay = ngày trả hằng tháng, lastPaid = ngày cắt tiền kỳ trước.
+  function loanDue(d, n) {
+    const x = keyToDate(d.nextDue);
+    return monthDay(x.getFullYear(), x.getMonth() + n, d.dueDay || x.getDate());
+  }
+  function loanLastCut(d) {
+    if (d.lastPaid) return d.lastPaid;
+    const x = keyToDate(d.nextDue);
+    return shiftWeekend(monthDay(x.getFullYear(), x.getMonth() - 1, d.dueDay || x.getDate()));
+  }
+  // Lãi một kỳ = dư nợ × lãi suất năm × số ngày thực tế / 365 (đúng cách ngân hàng tính ở bảng của bạn)
+  function loanInterest(balance, ratePct, days) { return Math.round(balance * (ratePct / 100) * days / 365); }
+
+  // Lịch trả từ dư nợ hiện tại. Kỳ cuối tự giảm cho vừa hết gốc.
+  function loanSchedule(s, d, maxRows) {
+    const rows = [];
+    let B = debtBalance(s, d), prev = loanLastCut(d);
+    const pay = Number(d.payment) || 0, rate = Number(d.rate) || 0;
+    for (let i = 0; B > 0.5 && i < (maxRows || 480); i++) {
+      const due = loanDue(d, i);
+      const cut = d.weekend === false ? due : shiftWeekend(due);
+      const days = Math.max(0, daysBetween(prev, cut));
+      const interest = loanInterest(B, rate, days);
+      let pmt = pay;
+      if (B + interest <= pmt) pmt = B + interest;
+      const principal = pmt - interest;
+      if (principal <= 0) { rows.push({ i, due, cut, days, interest, principal: 0, payment: pmt, balance: B, stuck: true }); break; }
+      B -= principal;
+      rows.push({ i, due, cut, days, interest, principal, payment: pmt, balance: Math.max(0, Math.round(B)) });
+      prev = cut;
+    }
+    return rows;
+  }
+  // Gợi ý khi ghi một lần trả nợ vào ngày `k` (lãi theo số ngày từ lần trả gần nhất)
+  function loanNextPayment(s, d, k) {
+    const B = debtBalance(s, d);
+    const days = Math.max(0, daysBetween(loanLastCut(d), k));
+    const interest = loanInterest(B, Number(d.rate) || 0, days);
+    let amount = Number(d.payment) || 0;
+    if (B + interest <= amount) amount = B + interest;
+    return { amount, interest, principal: amount - interest, days, balance: B };
+  }
+  // Tất toán ngay: dư nợ + lãi tới ngày đó + phí trả trước hạn
+  function loanPayoff(s, d, k) {
+    const B = debtBalance(s, d);
+    const interest = loanInterest(B, Number(d.rate) || 0, Math.max(0, daysBetween(loanLastCut(d), k)));
+    const fee = Math.round(B * (Number(d.feePct) || 0) / 100);
+    return { balance: B, interest, fee, total: B + interest + fee };
+  }
+
+  // ---------- Khoản định kỳ, sắp đến hạn, file lịch ----------
+  // Các ngày của khoản định kỳ trong khoảng [from, to]
+  function recurringDates(r, from, to) {
+    const out = [], f = keyToDate(from), t = keyToDate(to);
+    for (let i = 0; i < 600; i++) {
+      const first = new Date(f.getFullYear(), f.getMonth() + i, 1, 12);
+      if (first > t) break;
+      (r.days || []).forEach(day => {
+        const k = monthDay(first.getFullYear(), first.getMonth(), day);
+        if (k >= from && k <= to) out.push(k);
+      });
+    }
+    return out.sort();
+  }
+
+  // Danh sách sắp đến hạn trong `horizon` ngày (kèm các khoản đã quá hạn chưa xử lý, tối đa 45 ngày trước)
+  function upcoming(s, today, horizon) {
+    const to = addDays(today, horizon), floor = addDays(today, -45), items = [];
+    s.recurring.filter(r => r.active !== false).forEach(r => {
+      let from = addDays(r.doneUpTo || today, 1);
+      if (from < floor) from = floor;
+      recurringDates(r, from, to).forEach(k => items.push({ kind: 'recurring', id: r.id, date: k, title: r.name, amount: r.amount, type: r.type, overdue: k < today }));
+    });
+    s.debts.forEach(d => {
+      if (d.kind === 'loan') {
+        loanSchedule(s, d, 4).forEach(row => {
+          if (row.cut <= to && row.cut >= floor) items.push({ kind: 'loan', id: d.id, date: row.cut, title: 'Trả khoản vay ' + d.name, amount: row.payment, overdue: row.cut < today, row });
+        });
+      } else if (d.kind === 'card' && d.dueDay) {
+        const bal = debtBalance(s, d);
+        if (bal > 0) {
+          const k = nextMonthly(today, d.dueDay);
+          if (k <= to) items.push({ kind: 'card', id: d.id, date: k, title: 'Thanh toán thẻ ' + d.name, amount: bal, overdue: false });
+        }
+      }
+    });
+    return items.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  }
+
+  // File lịch .ics: mỗi khoản định kỳ/khoản vay/thẻ là một sự kiện lặp hằng tháng kèm báo thức trước `remind` ngày
+  function icsEscape(t) { return String(t == null ? '' : t).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n'); }
+  function buildIcs(s, today, remind) {
+    const compact = k => k.replace(/-/g, '');
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//So Tai Chinh//VI', 'CALSCALE:GREGORIAN'];
+    const add = (uid, title, desc, firstKey, days, count) => {
+      lines.push('BEGIN:VEVENT', 'UID:' + uid + '@so-tai-chinh', 'DTSTAMP:' + stamp,
+        'DTSTART;VALUE=DATE:' + compact(firstKey),
+        'RRULE:FREQ=MONTHLY;BYMONTHDAY=' + days.join(',') + (count ? ';COUNT=' + count : ''),
+        'SUMMARY:' + icsEscape(title), 'DESCRIPTION:' + icsEscape(desc),
+        'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEscape(title), 'TRIGGER:-P' + Math.max(0, remind) + 'D', 'END:VALARM', 'END:VEVENT');
+    };
+    s.recurring.filter(r => r.active !== false && (r.days || []).length).forEach(r => {
+      const first = recurringDates(r, today, addDays(today, 62))[0] || today;
+      add('rec-' + r.id, (r.type === 'income' ? 'Nhận ' : 'Chi ') + r.name, (r.amount ? 'Khoảng ' + fmtMoney(r.amount) : ''), first, r.days.slice().sort((a, b) => a - b));
+    });
+    s.debts.forEach(d => {
+      if (d.kind === 'loan' && d.dueDay) {
+        const rows = loanSchedule(s, d);
+        if (rows.length) add('loan-' + d.id, 'Trả khoản vay ' + d.name, 'Khoảng ' + fmtMoney(d.payment) + ' mỗi kỳ', rows[0].cut, [d.dueDay], rows.length);
+      } else if (d.kind === 'card' && d.dueDay) {
+        add('card-' + d.id, 'Thanh toán thẻ ' + d.name, 'Dư nợ hiện tại ' + fmtMoney(debtBalance(s, d)), nextMonthly(today, d.dueDay), [d.dueDay]);
+      }
+    });
+    lines.push('END:VCALENDAR');
+    return lines.join('\r\n');
   }
 
   // Gộp giao dịch của sổ và các dòng tiền từ mục Grab (thu nhập ca, xăng đổ thật, bảo dưỡng, chi khác) thành một danh sách
@@ -430,7 +590,7 @@
     const out = [];
     const inR = k => k >= from && k <= to;
     s.tx.forEach(t => {
-      if (inR(t.date)) out.push({ src: 'tx', id: t.id, date: t.date, type: t.type, amount: t.amount, cat: t.cat || '', note: t.note || '', acct: t.acct, to: t.to, adj: !!t.adj });
+      if (inR(t.date)) out.push({ src: 'tx', id: t.id, date: t.date, type: t.type, amount: t.amount, cat: t.cat || '', note: t.note || '', acct: t.acct, to: t.to, adj: !!t.adj, debt: t.debt, principal: t.principal, interest: t.interest });
     });
     const model = fuelModel(s);
     s.shifts.forEach(sh => {
@@ -453,9 +613,15 @@
 
   // Báo cáo thu/chi theo danh mục trong khoảng ngày. Chuyển khoản và điều chỉnh số dư không tính là thu/chi.
   function periodReport(s, from, to) {
-    const r = { income: 0, expense: 0, incomeCats: {}, expenseCats: {}, transfers: 0 };
+    const r = { income: 0, expense: 0, incomeCats: {}, expenseCats: {}, transfers: 0, debtPrincipal: 0 };
     unifiedEntries(s, from, to).forEach(e => {
       if (e.type === 'transfer') { r.transfers += e.amount; return; }
+      if (e.type === 'debtpay') { // trả nợ: phần gốc không phải chi (chỉ là giảm nợ), phần lãi/phí mới là chi
+        const interest = e.interest || 0;
+        r.debtPrincipal += e.amount - interest;
+        if (interest > 0) { r.expense += interest; addTo(r.expenseCats, 'Lãi vay & phí', interest); }
+        return;
+      }
       if (e.adj) return;
       if (e.type === 'income') { r.income += e.amount; addTo(r.incomeCats, e.cat || 'Khác', e.amount); }
       else { r.expense += e.amount; addTo(r.expenseCats, e.cat || 'Khác', e.amount); }
@@ -509,6 +675,8 @@
 
   const api = {
     DEFAULT_SETTINGS, CATS, TYPE_LABEL, MAINT_ITEMS, TX_CATS, ACCT_KINDS, GRAB_ACCT,
+    debtBalance, loanSchedule, loanNextPayment, loanPayoff, loanDue, loanLastCut, loanInterest,
+    addDays, daysBetween, monthDay, shiftWeekend, nextMonthly, recurringDates, upcoming, buildIcs,
     ledgerReady, countsAfter, ledgerCounts, accountBalances, unifiedEntries, periodReport, grabPot, grabExcluded, implicitCapital, mergeState,
     emptyState, migrate, dateKey, keyToDate, todayKey,
     lastKnownOdo, fuelModel, fuelRate, priceOn, litersOf, fuelPriceStatus, shiftCalc,

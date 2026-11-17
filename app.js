@@ -6,7 +6,7 @@
   const KEY = 'grab-tracker-v1';          // dữ liệu thô (khi chưa đặt mật khẩu)
   const KEY_ENC = 'grab-tracker-enc-v1';  // dữ liệu đã mã hoá (khi đã đặt mật khẩu)
   const DAYS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-  const TITLES = { overview: 'Tổng quan', ledger: 'Giao dịch', accounts: 'Tài khoản', grab: 'Grab', settings: 'Cài đặt' };
+  const TITLES = { overview: 'Tổng quan', ledger: 'Giao dịch', accounts: 'Tài khoản & nợ', plan: 'Kế hoạch', grab: 'Grab', settings: 'Cài đặt' };
   const GRAB = L.GRAB_ACCT; // tài khoản ảo "Tiền Grab"
 
   // Trạng thái khoá: khi đã đặt mật khẩu, khoá giải mã chỉ nằm trong bộ nhớ lúc đang mở khoá
@@ -19,6 +19,7 @@
   let gsub = 'shift';                 // tab con trong mục Grab: shift | report | pot | car
   let finOff = 0, ledOff = 0;         // tháng đang xem ở Tổng quan / Giao dịch (0 = tháng này)
   let ledFilter = 'all', txType = 'expense';
+  let txCtx = null;                   // ngữ cảnh khi ghi giao dịch từ "Sắp đến hạn" (để đánh dấu đã xử lý)
   let period = { kind: 'week', off: 0 };
   let expType = 'ride';
 
@@ -675,7 +676,9 @@
   }
 
   // ---------------------------------------------------------------- sổ tài chính (Tổng quan, Giao dịch, Tài khoản)
-  const acctName = id => (id === GRAB ? 'Tiền Grab' : ((S.accounts.find(a => a.id === id) || {}).name || '(đã xoá)'));
+  const debtOf = id => S.debts.find(d => d.id === id);
+  const debtLabel = d => (d.kind === 'card' ? 'Thẻ ' : '') + d.name;
+  const acctName = id => (id === GRAB ? 'Tiền Grab' : debtOf(id) ? debtLabel(debtOf(id)) : ((S.accounts.find(a => a.id === id) || {}).name || '(đã xoá)'));
   const dmOf = k => k.slice(8) + '/' + k.slice(5, 7);
   const tileNum = n => (Math.abs(n) >= 1e7 ? fmtShort(n) + 'đ' : fmtMoney(n));
   const tileHtml = (cls, text) => `<div class="v ${cls}" style="font-size:${text.length > 9 ? 14 : 17}px">${text}</div>`;
@@ -688,7 +691,7 @@
     if ((S.shifts.length + S.expenses.length + S.tx.length) === 0) return '';
     const last = S.lastBackup ? new Date(S.lastBackup) : null;
     const days = last ? (Date.now() - last) / 864e5 : Infinity;
-    if (days <= 7) return '';
+    if (days <= 3) return '';
     return `<div class="alert bad"><div>💾 <b>${last ? 'Đã ' + Math.floor(days) + ' ngày chưa sao lưu.' : 'Bạn chưa sao lưu lần nào.'}</b> Dữ liệu chỉ nằm trên máy này.</div><button class="btn sm" data-act="export">Sao lưu</button></div>`;
   }
   function catBars(obj, cls) {
@@ -702,7 +705,12 @@
     const act = { tx: 'edit-tx', shift: 'edit-shift', fill: 'edit-fill', maint: 'edit-maint', exp: 'edit-expense' }[e.src];
     let title, sub, amt, cls = '';
     if (e.type === 'transfer') { title = 'Chuyển tiền'; sub = acctName(e.acct) + ' → ' + acctName(e.to); amt = fmtMoney(e.amount); }
-    else {
+    else if (e.type === 'debtpay') {
+      const d = debtOf(e.debt);
+      title = 'Trả nợ · ' + (d ? debtLabel(d) : '(đã xoá)');
+      sub = acctName(e.acct) + ' · gốc ' + fmtMoney(e.amount - (e.interest || 0)) + (e.interest ? ' · lãi/phí ' + fmtMoney(e.interest) : '');
+      amt = '−' + fmtMoney(e.amount); cls = 'neg';
+    } else {
       title = e.adj ? 'Điều chỉnh số dư' : (e.cat || 'Khác');
       sub = [acctName(e.acct), e.note].filter(Boolean).join(' · ');
       amt = (e.type === 'income' ? '+' : '−') + fmtMoney(e.amount); cls = e.type === 'income' ? 'pos' : 'neg';
@@ -715,7 +723,7 @@
     const ready = L.ledgerReady(S);
     const r = L.monthRange(finOff);
     const rep = L.periodReport(S, r.from, r.to);
-    let html = backupAlert();
+    let html = reminderAlerts() + backupAlert();
     if (!ready) {
       html += `<section class="card"><div class="eyebrow">Sổ tài chính</div>
         <h2 style="margin-top:6px">Bắt đầu sổ tài chính</h2>
@@ -724,10 +732,13 @@
     } else {
       const b = L.accountBalances(S);
       const rows = S.accounts.map(a => ({ id: a.id, name: a.name, v: b.byId[a.id] })).concat(b.grab == null ? [] : [{ id: GRAB, name: 'Tiền Grab', v: b.grab }]);
-      html += `<section class="card"><div class="eyebrow">Tổng tài sản</div>
-        <div class="big ${b.total < 0 ? 'neg' : ''}">${fmtMoney(b.total)}</div>
+      const hasDebt = S.debts.length > 0;
+      html += `<section class="card"><div class="eyebrow">${hasDebt ? 'Tài sản ròng (tài sản − nợ)' : 'Tổng tài sản'}</div>
+        <div class="big ${(hasDebt ? b.net : b.total) < 0 ? 'neg' : ''}">${fmtMoney(hasDebt ? b.net : b.total)}</div>
         ${rows.map(a => `<div class="kv"><span>${esc(a.name)}</span><b class="${a.v < 0 ? 'neg' : ''}">${fmtMoney(a.v)}</b></div>`).join('')}
-        <button class="link left" data-act="tab" data-tab="accounts">Quản lý tài khoản ›</button></section>`;
+        ${hasDebt ? `<div class="kv" style="border-top:1px solid var(--line);margin-top:4px;padding-top:8px"><span>Tổng tài sản</span><b>${fmtMoney(b.total)}</b></div>
+          <div class="kv"><span>Nợ phải trả</span><b class="neg">−${fmtMoney(b.debtTotal)}</b></div>` : ''}
+        <button class="link left" data-act="tab" data-tab="accounts">Quản lý tài khoản và nợ ›</button></section>`;
     }
     html += monthNavHtml(finOff, 'fin-prev', 'fin-next');
     html += `<div class="tiles">
@@ -744,6 +755,7 @@
       html += `<div class="empty">Chưa có giao dịch nào trong tháng này.</div>`;
     }
     if (rep.transfers > 0) html += `<p class="hint center">Chuyển tiền giữa các tài khoản (${fmtMoney(rep.transfers)}) không tính là thu hay chi.</p>`;
+    if (rep.debtPrincipal > 0) html += `<p class="hint center">Đã trả gốc nợ ${fmtMoney(rep.debtPrincipal)} (làm giảm dư nợ, không tính là chi; chỉ phần lãi/phí tính là chi).</p>`;
     return html;
   }
 
@@ -759,7 +771,7 @@
       <div class="tile in"><div class="k">THU</div>${tileHtml('', tileNum(rep.income))}</div>
       <div class="tile out"><div class="k">CHI</div>${tileHtml('', tileNum(rep.expense))}</div>
       <div class="tile"><div class="k">CHÊNH LỆCH</div>${tileHtml(sgn(rep.net), (rep.net > 0 ? '+' : '') + tileNum(rep.net))}</div></div>`;
-    html += `<div class="seg" style="margin-bottom:12px">${[['all', 'Tất cả'], ['income', 'Thu'], ['expense', 'Chi'], ['transfer', 'Chuyển']].map(f =>
+    html += `<div class="seg" style="margin-bottom:12px">${[['all', 'Tất cả'], ['income', 'Thu'], ['expense', 'Chi'], ['transfer', 'Chuyển'], ['debtpay', 'Trả nợ']].map(f =>
       `<button class="${ledFilter === f[0] ? 'on' : ''}" data-act="led-filter" data-f="${f[0]}">${f[1]}</button>`).join('')}</div>`;
     if (!items.length) return html + `<div class="empty">Không có giao dịch nào.</div>`;
     const groups = {};
@@ -782,10 +794,25 @@
     const b = L.accountBalances(S);
     const list = S.accounts.map(a => `<button class="row" data-act="edit-account" data-id="${a.id}"><div class="l"><b>${esc(a.name)}</b><span class="muted">${L.ACCT_KINDS[a.kind] || 'Khác'}</span></div><div class="amt ${b.byId[a.id] < 0 ? 'neg' : ''}">${fmtMoney(b.byId[a.id])}</div></button>`).join('');
     const grabRow = `<button class="row" data-act="goto-pot"><div class="l"><b>Tiền Grab</b><span class="muted">${b.grab == null ? 'Chưa có dữ liệu Grab nào' : b.grabImplicit ? 'Chưa nhập vốn Grab: đang tính từ 0 kể từ bản ghi Grab đầu tiên. Bấm để nhập vốn.' : L.grabExcluded(S).n > ((S.capital || {}).ack || 0) ? `⚠️ ${L.grabExcluded(S).n} ca nằm trong phần đã tính vào vốn Grab nên chưa được cộng. Bấm để xem.` : 'Lấy từ mục Grab, bấm để xem chi tiết'}</span></div><div class="amt">${b.grab == null ? '—' : fmtMoney(b.grab)}</div></button>`;
-    return `<section class="card"><div class="eyebrow">Tổng tài sản</div><div class="big ${b.total < 0 ? 'neg' : ''}">${fmtMoney(b.total)}</div>
-        <div class="muted small">Sổ bắt đầu từ ${whenLabel(S.ledger.when)} ngày ${dmOf(S.ledger.start)}, chạy tiếp lâu dài.</div>
+    const hasDebt = S.debts.length > 0;
+    const debtRows = S.debts.map(d => {
+      const bal = b.debts[d.id];
+      let sub;
+      if (d.kind === 'loan') {
+        const rows = L.loanSchedule(S, d);
+        sub = rows.length ? `Kỳ tới ${dmOf(rows[0].cut)} · còn ${rows.length} kỳ · lãi ${String(d.rate).replace('.', ',')}%/năm` : 'Đã trả hết';
+      } else {
+        sub = `Hạn mức ${fmtMoney(d.limit || 0)} · còn khả dụng ${fmtMoney(Math.max(0, (d.limit || 0) - bal))}${d.dueDay ? ' · đến hạn ngày ' + d.dueDay : ''}`;
+      }
+      return `<button class="row" data-act="debt-detail" data-id="${d.id}"><div class="l"><b>${esc(debtLabel(d))}</b><span class="muted">${sub}</span></div><div class="amt neg">${fmtMoney(bal)}</div></button>`;
+    }).join('');
+    return `<section class="card"><div class="eyebrow">${hasDebt ? 'Tài sản ròng (tài sản − nợ)' : 'Tổng tài sản'}</div><div class="big ${(hasDebt ? b.net : b.total) < 0 ? 'neg' : ''}">${fmtMoney(hasDebt ? b.net : b.total)}</div>
+        ${hasDebt ? `<div class="kv"><span>Tổng tài sản</span><b>${fmtMoney(b.total)}</b></div><div class="kv"><span>Nợ phải trả</span><b class="neg">−${fmtMoney(b.debtTotal)}</b></div>` : ''}
+        <div class="muted small">Sổ bắt đầu từ ${whenLabel(S.ledger.when)} ${dmOf(S.ledger.start)}, chạy tiếp lâu dài.</div>
         <button class="btn primary lg" data-act="add-account">＋ Thêm tài khoản</button></section>
       <section class="card tight"><div class="group-h">Tài khoản</div>${list || '<div class="empty">Chưa có tài khoản nào. Thêm ví tiền mặt, tài khoản ngân hàng...</div>'}${grabRow}</section>
+      <section class="card tight"><div class="group-h">Nợ (khoản vay, thẻ tín dụng)</div>${debtRows || '<div class="empty">Chưa có khoản nợ nào.</div>'}
+        <div style="padding:6px 12px 10px"><button class="btn" data-act="add-debt">＋ Thêm khoản nợ</button></div></section>
       <button class="link" data-act="edit-start">Sửa ngày bắt đầu sổ</button>`;
   }
 
@@ -804,7 +831,7 @@
       <label class="l">Loại</label>
       <div class="chips" id="kchips">${Object.keys(L.ACCT_KINDS).map(k => `<button type="button" class="chip ${k === kind ? 'on' : ''}" data-act="pick-kind" data-k="${k}">${L.ACCT_KINDS[k]}</button>`).join('')}</div>
       <input type="hidden" id="f-kind" value="${kind}">
-      ${moneyField('f-open', `Số dư tại ${whenLabel(S.ledger.when)} ngày ${dmOf(S.ledger.start)} (ngày bắt đầu sổ)`, a ? a.opening : '', { focus: !a })}
+      ${moneyField('f-open', `Số dư tại ${whenLabel(S.ledger.when)} ${dmOf(S.ledger.start)} (ngày bắt đầu sổ)`, a ? a.opening : '', { focus: !a })}
       <div class="err" id="err"></div>
       <button class="btn primary lg" data-act="save-account" data-id="${a ? a.id : ''}">${a ? 'Lưu thay đổi' : 'Thêm tài khoản'}</button>
       ${a ? `<div class="card" style="margin:14px 0 0;background:var(--bg);box-shadow:none">
@@ -815,10 +842,11 @@
   }
 
   // ---- Sheet: giao dịch (Chi / Thu / Chuyển)
-  const acctOptions = () => S.accounts.map(a => ({ id: a.id, name: a.name })).concat(L.grabPot(S) ? [{ id: GRAB, name: 'Tiền Grab' }] : []);
+  const acctOptions = withCards => S.accounts.map(a => ({ id: a.id, name: a.name })).concat(L.grabPot(S) ? [{ id: GRAB, name: 'Tiền Grab' }] : [])
+    .concat(withCards ? S.debts.filter(d => d.kind === 'card').map(d => ({ id: d.id, name: 'Thẻ ' + d.name })) : []); // chi bằng thẻ tín dụng
   const defaultAcct = () => { const o = acctOptions(); return (o.find(x => x.id === S.ledger.lastAcct) || o[0] || {}).id || ''; };
-  function acctChips(role, selected) {
-    return `<div class="chips" id="ch-${role}">${acctOptions().map(o => `<button type="button" class="chip ${o.id === selected ? 'on' : ''}" data-act="pick-acct" data-role="${role}" data-id="${o.id}">${esc(o.name)}</button>`).join('')}</div><input type="hidden" id="f-${role}" value="${esc(selected || '')}">`;
+  function acctChips(role, selected, withCards) {
+    return `<div class="chips" id="ch-${role}">${acctOptions(withCards).map(o => `<button type="button" class="chip ${o.id === selected ? 'on' : ''}" data-act="pick-acct" data-role="${role}" data-id="${o.id}">${esc(o.name)}</button>`).join('')}</div><input type="hidden" id="f-${role}" value="${esc(selected || '')}">`;
   }
   function txCatChips(type, selected) {
     const used = S.tx.filter(t => t.type === type && !t.adj).map(t => t.cat).filter(Boolean);
@@ -829,15 +857,24 @@
     const amt = v.amt != null ? v.amt : (t ? t.amount : '');
     const date = v.date || (t ? t.date : L.todayKey());
     const note = v.note != null ? v.note : (t ? t.note : '');
-    let body = moneyField('f-amt', 'Số tiền', amt, { focus: !t });
+    let body = moneyField('f-amt', type === 'debtpay' ? 'Tổng số tiền trả' : 'Số tiền', amt, { focus: !t });
     if (type === 'transfer') {
       const from = v.from || (t ? t.acct : defaultAcct());
       const to = v.to || (t ? t.to : ((acctOptions().find(o => o.id !== from) || {}).id || ''));
       body += `<label class="l">Từ tài khoản</label>${acctChips('from', from)}<label class="l">Đến tài khoản</label>${acctChips('to', to)}`;
+    } else if (type === 'debtpay') {
+      const debt = v.debt || (t ? t.debt : ((S.debts[0] || {}).id || ''));
+      const acct = v.acct || (t ? t.acct : defaultAcct());
+      const intr = v.interest != null ? v.interest : (t ? t.interest : '');
+      body += `<label class="l">Khoản nợ</label>
+        <div class="chips" id="ch-debt">${S.debts.map(d => `<button type="button" class="chip ${d.id === debt ? 'on' : ''}" data-act="pick-debt" data-id="${d.id}">${esc(debtLabel(d))}</button>`).join('')}</div>
+        <input type="hidden" id="f-debt" value="${esc(debt)}">
+        <label class="l">Trả từ tài khoản</label>${acctChips('acct', acct)}
+        ${moneyField('f-int', 'Trong đó lãi / phí', intr === undefined ? '' : intr, { hint: 'Phần lãi và phí tính là chi; phần còn lại là trả gốc, làm giảm dư nợ.' })}`;
     } else {
       const acct = v.acct || (t ? t.acct : defaultAcct());
       const sel = v.cat || (t ? t.cat : L.TX_CATS[type][0]);
-      body += `<label class="l">${type === 'income' ? 'Vào tài khoản' : 'Trả từ tài khoản'}</label>${acctChips('acct', acct)}
+      body += `<label class="l">${type === 'income' ? 'Vào tài khoản' : 'Trả từ tài khoản'}</label>${acctChips('acct', acct, type === 'expense')}
         <label class="l">Danh mục</label><div class="chips" id="txchips">${txCatChips(type, sel)}</div>
         <input type="hidden" id="f-cat" value="${esc(sel)}">
         ${textField('f-cat2', 'Hoặc gõ danh mục khác', '', 'vd: Học phí, Sửa nhà...')}`;
@@ -845,16 +882,149 @@
     return body + textField('f-note', 'Ghi chú (tuỳ chọn)', note, '') + dateField('f-date', 'Ngày', date)
       + `<div class="hint" style="margin:-6px 0 10px">Ngày ${S.ledger.when === 'start' ? 'trước' : 'từ'} ${dmOf(S.ledger.start)}${S.ledger.when === 'start' ? '' : ' trở về trước'} (ngày bắt đầu sổ) chỉ để tham khảo, không cộng vào số dư.</div>`;
   }
-  function txSheet(t) {
+  // t: giao dịch đang sửa; pre: giá trị điền sẵn; ctx: ngữ cảnh từ "Sắp đến hạn" (khoản định kỳ cần đánh dấu đã xử lý)
+  function txSheet(t, pre, ctx) {
     if (!L.ledgerReady(S)) { toast('Hãy thiết lập sổ tài chính trước'); tab = 'accounts'; render(true); return; }
     if (!acctOptions().length) { toast('Hãy thêm ít nhất một tài khoản trước'); tab = 'accounts'; render(true); return; }
-    txType = t ? t.type : 'expense'; // ghi mới luôn mở ở "Chi" (loại hay dùng nhất)
+    txCtx = ctx || null;
+    txType = t ? t.type : ((pre && pre.type) || 'expense'); // ghi mới mặc định "Chi" (loại hay dùng nhất)
     openSheet(t ? 'Sửa giao dịch' : 'Thêm giao dịch', `
-      <div class="seg" id="txseg">${[['expense', 'Chi'], ['income', 'Thu'], ['transfer', 'Chuyển']].map(x => `<button type="button" class="${x[0] === txType ? 'on' : ''}" data-act="tx-type" data-t="${x[0]}">${x[1]}</button>`).join('')}</div>
-      <div id="txf">${txFields(txType, t)}</div>
+      <div class="seg" id="txseg">${[['expense', 'Chi'], ['income', 'Thu'], ['transfer', 'Chuyển'], ['debtpay', 'Trả nợ']].map(x => `<button type="button" class="${x[0] === txType ? 'on' : ''}" data-act="tx-type" data-t="${x[0]}">${x[1]}</button>`).join('')}</div>
+      <div id="txf">${txFields(txType, t, pre)}</div>
       <div class="err" id="err"></div>
       <button class="btn primary lg" data-act="save-tx" data-id="${t ? t.id : ''}">${t ? 'Lưu thay đổi' : 'Lưu'}</button>
       ${t ? `<button class="link danger" data-act="del-tx" data-id="${t.id}">Xoá giao dịch</button>` : ''}`);
+  }
+
+  // ---------------------------------------------------------------- nợ, khoản định kỳ, nhắc hẹn
+  const relDays = (k, today) => { const n = L.daysBetween(today, k); return n < 0 ? `quá hạn ${-n} ngày` : n === 0 ? 'hôm nay' : `còn ${n} ngày`; };
+  const actionLabel = u => (u.kind === 'recurring' ? (u.type === 'income' ? 'Đã nhận' : 'Đã chi') : 'Đã trả');
+  const dataOf = u => `data-kind="${u.kind}" data-id="${u.id}" data-date="${u.date}"`;
+
+  // Nhắc ở Tổng quan: các khoản đến hạn trong vòng N ngày tới (hoặc đã quá hạn chưa xử lý)
+  function reminderAlerts() {
+    const today = L.todayKey(), rd = Number(S.settings.remindDays) || 3;
+    const items = L.upcoming(S, today, rd);
+    if (!items.length) return '';
+    return items.slice(0, 3).map(u => `<div class="alert ${u.overdue ? 'bad' : ''}"><div>⏰ <b>${esc(u.title)}</b> · ${dmOf(u.date)} (${relDays(u.date, today)})${u.amount ? ' · ' + fmtMoney(u.amount) : ''}</div><button class="btn sm" data-act="do-upcoming" ${dataOf(u)} style="margin:0">${actionLabel(u)}</button></div>`).join('')
+      + (items.length > 3 ? `<button class="link" data-act="tab" data-tab="plan">+${items.length - 3} khoản khác sắp đến hạn ›</button>` : '');
+  }
+
+  function upcomingRow(u, today) {
+    const inc = u.kind === 'recurring' && u.type === 'income';
+    const extra = u.kind === 'loan' && u.row ? ` · gốc ${fmtMoney(u.row.principal)} + lãi ${fmtMoney(u.row.interest)}` : '';
+    return `<div class="row div"><div class="l"><b>${esc(u.title)}</b><span class="muted ${u.overdue ? 'neg' : ''}">${keyLabel(u.date)} · ${relDays(u.date, today)}${extra}</span></div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none"><b class="${u.overdue ? 'neg' : inc ? 'pos' : ''}">${u.amount ? (inc ? '+' : '') + fmtMoney(u.amount) : ''}</b>
+      <button class="btn xs" data-act="do-upcoming" ${dataOf(u)}>${actionLabel(u)}</button></div></div>`;
+  }
+
+  function viewPlan() {
+    const today = L.todayKey(), rd = Number(S.settings.remindDays) || 3;
+    const items = L.upcoming(S, today, 30);
+    const recRows = S.recurring.map(r => `<button class="row" data-act="edit-rec" data-id="${r.id}"><div class="l"><b>${esc(r.name)}</b><span class="muted">${r.type === 'income' ? 'Thu' : 'Chi'} · ngày ${(r.days || []).join(', ')} hằng tháng${r.active === false ? ' · tạm dừng' : ''}</span></div><div class="amt ${r.type === 'income' ? 'pos' : ''}">${r.amount ? (r.type === 'income' ? '+' : '') + fmtMoney(r.amount) : ''}</div></button>`).join('');
+    return `<section class="card"><div class="eyebrow">Nhắc hẹn</div>
+        <p class="muted small" style="margin:6px 0 10px">App nhắc trước <b>${rd} ngày</b> ở màn Tổng quan mỗi khi bạn mở app (đổi ở Cài đặt). Muốn iPhone tự báo thức kể cả khi chưa mở app, hãy thêm các khoản vào Lịch.</p>
+        <button class="btn primary" data-act="export-ics">📅 Thêm vào Lịch iPhone</button></section>
+      <section class="card tight"><div class="group-h">Sắp đến hạn · 30 ngày tới</div>${items.length ? items.map(u => upcomingRow(u, today)).join('') : '<div class="empty">Chưa có khoản nào. Hãy thêm khoản định kỳ (lương, tiền nhà...) hoặc khoản nợ.</div>'}</section>
+      <section class="card tight"><div class="group-h">Khoản định kỳ (lương, chuyển cho vợ, tiền nhà...)</div>${recRows || '<div class="empty">Chưa có khoản định kỳ nào.</div>'}
+        <div style="padding:6px 12px 10px"><button class="btn" data-act="add-rec">＋ Thêm khoản định kỳ</button></div></section>`;
+  }
+
+  // ---- Sheet: khoản định kỳ
+  let recType = 'income';
+  function recFields(type, r, v) {
+    v = v || {};
+    const name = v.name != null ? v.name : (r ? r.name : '');
+    const amt = v.amt != null ? v.amt : (r ? r.amount : '');
+    const days = v.days != null ? v.days : (r ? (r.days || []).join(', ') : '');
+    const acct = v.acct || (r ? r.acct : defaultAcct());
+    const sel = v.cat || (r ? r.cat : L.TX_CATS[type][0]);
+    const done = v.done || (r && r.doneUpTo) || L.todayKey();
+    return textField('f-name', 'Tên khoản', name, type === 'income' ? 'vd Lương kỳ 1' : 'vd Chuyển cho vợ')
+      + moneyField('f-amt', type === 'income' ? 'Số tiền dự kiến (số thực nhận nhập khi nhận)' : 'Số tiền', amt)
+      + `<div class="fld"><label for="f-days">Ngày trong tháng</label><input id="f-days" inputmode="numeric" autocomplete="off" value="${esc(days)}" placeholder="vd 15  hoặc  5, 15"><div class="hint">Lặp lại mỗi tháng vào các ngày này (nhiều ngày thì cách nhau dấu phẩy).</div></div>`
+      + `<label class="l">${type === 'income' ? 'Vào tài khoản' : 'Trả từ tài khoản'}</label>${acctChips('acct', acct, type === 'expense')}`
+      + `<label class="l">Danh mục</label><div class="chips" id="txchips">${txCatChips(type, sel)}</div><input type="hidden" id="f-cat" value="${esc(sel)}">${textField('f-cat2', 'Hoặc gõ danh mục khác', '', '')}`
+      + dateField('f-done', 'Đã xử lý tới ngày', done) + `<div class="hint" style="margin:-6px 0 10px">Chỉ các ngày <b>sau</b> ngày này mới hiện ở "Sắp đến hạn".</div>`;
+  }
+  function recSheet(r) {
+    if (!acctOptions().length) { toast('Hãy thêm ít nhất một tài khoản trước'); tab = 'accounts'; render(true); return; }
+    recType = r ? r.type : 'income';
+    openSheet(r ? 'Sửa khoản định kỳ' : 'Thêm khoản định kỳ', `
+      <div class="seg" id="recseg">${[['income', 'Thu (lương...)'], ['expense', 'Chi (cố định)']].map(x => `<button type="button" class="${x[0] === recType ? 'on' : ''}" data-act="rec-type" data-t="${x[0]}">${x[1]}</button>`).join('')}</div>
+      <div id="recf">${recFields(recType, r)}</div>
+      <div class="err" id="err"></div>
+      <button class="btn primary lg" data-act="save-rec" data-id="${r ? r.id : ''}">${r ? 'Lưu thay đổi' : 'Thêm'}</button>
+      ${r ? `<button class="link danger" data-act="del-rec" data-id="${r.id}">Xoá khoản định kỳ</button>` : ''}`);
+  }
+
+  // ---- Sheet: khoản nợ (vay trả góp / thẻ tín dụng)
+  let dKind = 'loan';
+  function debtFields(kind, d, v) {
+    v = v || {};
+    const g = (k, dv) => (v[k] != null ? v[k] : (d && d[k] != null ? d[k] : dv));
+    let h = textField('f-name', kind === 'card' ? 'Tên thẻ' : 'Tên khoản vay', g('name', ''), kind === 'card' ? 'vd Vietcombank' : 'vd Vay ngân hàng')
+      + moneyField('f-bal', kind === 'card' ? 'Dư nợ hiện tại của thẻ' : 'Dư nợ gốc còn lại', g('opening', ''), { focus: !d })
+      + dateField('f-asof', 'Dư nợ này tính tại ngày', g('asOf', L.todayKey())) + whenSeg(g('when', 'start'));
+    if (kind === 'loan') {
+      h += decField('f-rate', 'Lãi suất (%/năm, tính theo dư nợ giảm dần)', g('rate', ''), { suf: '%' })
+        + moneyField('f-pay', 'Số tiền trả mỗi kỳ (gốc + lãi)', g('payment', ''))
+        + intField('f-dueday', 'Ngày trả hằng tháng', g('dueDay', ''), { suf: 'ngày', hint: 'Ngày ghi trong hợp đồng, ví dụ 6. Rơi vào Thứ 7/CN thì ngân hàng cắt tiền thứ Hai.' })
+        + dateField('f-nextdue', 'Ngày trả kỳ tới (để trống: tự tính)', g('nextDue', ''))
+        + dateField('f-lastpaid', 'Ngày cắt tiền kỳ vừa rồi (để trống: tự tính)', g('lastPaid', ''))
+        + decField('f-fee', 'Phí trả trước hạn (% dư nợ gốc còn lại)', g('feePct', ''), { suf: '%' })
+        + `<label class="check"><input type="checkbox" id="f-weekend" ${d && d.weekend === false ? '' : 'checked'}> Ngày trả rơi vào Thứ 7/CN thì cắt tiền thứ Hai</label>`;
+    } else {
+      h += moneyField('f-limit', 'Hạn mức thẻ', g('limit', ''))
+        + intField('f-dueday', 'Ngày đến hạn thanh toán (tuỳ chọn)', g('dueDay', ''), { suf: 'ngày' })
+        + intField('f-stmt', 'Ngày sao kê (tuỳ chọn)', g('stmtDay', ''), { suf: 'ngày' });
+    }
+    return h;
+  }
+  function debtSheet(d) {
+    dKind = d ? d.kind : 'loan';
+    openSheet(d ? 'Sửa khoản nợ' : 'Thêm khoản nợ', `
+      ${d ? '' : `<div class="seg" id="dkseg">${[['loan', 'Vay trả góp'], ['card', 'Thẻ tín dụng']].map(x => `<button type="button" class="${x[0] === dKind ? 'on' : ''}" data-act="pick-dkind" data-k="${x[0]}">${x[1]}</button>`).join('')}</div>`}
+      <div id="dbf">${debtFields(dKind, d)}</div>
+      <div class="err" id="err"></div>
+      <button class="btn primary lg" data-act="save-debt" data-id="${d ? d.id : ''}">${d ? 'Lưu thay đổi' : 'Thêm khoản nợ'}</button>
+      ${d ? `<button class="link danger" data-act="del-debt" data-id="${d.id}">Xoá khoản nợ</button>` : ''}`);
+  }
+
+  function debtDetail(id) {
+    const d = debtOf(id); if (!d) return;
+    const bal = L.debtBalance(S, d), today = L.todayKey();
+    let body;
+    if (d.kind === 'loan') {
+      const rows = L.loanSchedule(S, d), next = rows[0];
+      const totalInterest = rows.reduce((a, r) => a + r.interest, 0);
+      const po = L.loanPayoff(S, d, today);
+      body = `<div class="big neg" style="font-size:30px">${fmtMoney(bal)}</div><div class="muted small" style="margin-bottom:10px">dư nợ gốc còn lại</div>
+        <div class="kv"><span>Lãi suất</span><b>${String(d.rate).replace('.', ',')}%/năm (theo dư nợ giảm dần)</b></div>
+        <div class="kv"><span>Trả mỗi kỳ</span><b>${fmtMoney(d.payment)}</b></div>
+        <div class="kv"><span>Ngày trả</span><b>ngày ${d.dueDay} hằng tháng</b></div>
+        ${next ? `<div class="kv"><span>Kỳ tới</span><b>${keyLabel(next.cut)} (${relDays(next.cut, today)})</b></div>
+          <div class="kv"><span>— trong đó gốc / lãi</span><b>${fmtMoney(next.principal)} / ${fmtMoney(next.interest)}</b></div>` : ''}
+        <div class="kv"><span>Số kỳ còn lại</span><b>${rows.length}</b></div>
+        ${rows.length ? `<div class="kv"><span>Dự kiến trả hết</span><b>${dmOf(rows[rows.length - 1].cut)}/${rows[rows.length - 1].cut.slice(0, 4)}</b></div>` : ''}
+        <div class="kv"><span>Tổng lãi còn phải trả</span><b>${fmtMoney(totalInterest)}</b></div>
+        <div class="kv"><span>Tất toán hôm nay</span><b>${fmtMoney(po.total)}</b></div>
+        <div class="hint" style="margin:-2px 0 10px">= dư nợ ${fmtMoney(po.balance)} + lãi tới hôm nay ${fmtMoney(po.interest)}${po.fee ? ' + phí trả trước hạn ' + fmtMoney(po.fee) : ''}. Số ngân hàng báo có thể lệch nhẹ.</div>
+        <button class="btn primary lg" data-act="pay-debt" data-id="${d.id}">Ghi trả kỳ này</button>
+        <details style="margin-top:12px"><summary>Xem lịch trả (${rows.length} kỳ)</summary>
+          <div style="margin-top:6px">${rows.map(r => `<div class="kv" style="font-size:13.5px"><span>${keyLabel(r.cut)}</span><span class="muted">lãi ${L.fmtInt(r.interest)} · gốc ${L.fmtInt(r.principal)}</span><b>${L.fmtInt(r.balance)}</b></div>`).join('')}</div></details>`;
+    } else {
+      const avail = Math.max(0, (d.limit || 0) - bal), pct = d.limit ? Math.min(100, Math.round(bal / d.limit * 100)) : 0;
+      body = `<div class="big neg" style="font-size:30px">${fmtMoney(bal)}</div><div class="muted small">dư nợ hiện tại</div>
+        <div class="progress ${pct >= 90 ? 'over' : pct >= 70 ? 'warn' : ''}"><i style="width:${pct}%"></i></div>
+        <div class="kv"><span>Hạn mức</span><b>${fmtMoney(d.limit || 0)}</b></div>
+        <div class="kv"><span>Còn khả dụng</span><b>${fmtMoney(avail)} (đã dùng ${pct}%)</b></div>
+        ${d.stmtDay ? `<div class="kv"><span>Ngày sao kê</span><b>ngày ${d.stmtDay}</b></div>` : ''}
+        ${d.dueDay ? `<div class="kv"><span>Đến hạn thanh toán</span><b>ngày ${d.dueDay} hằng tháng</b></div>` : ''}
+        <div class="hint" style="margin:6px 0 10px">Quẹt thẻ: ghi giao dịch Chi và chọn "Thẻ ${esc(d.name)}" làm tài khoản. Trả thẻ: dùng nút bên dưới.</div>
+        <button class="btn primary lg" data-act="pay-debt" data-id="${d.id}">Ghi trả thẻ</button>`;
+    }
+    openSheet(debtLabel(d), body + `<button class="link" data-act="edit-debt" data-id="${d.id}">Sửa thông tin khoản nợ</button>`);
   }
 
   // ---------------------------------------------------------------- giao diện (màu chủ đạo)
@@ -960,7 +1130,12 @@
 
   function viewSettings() {
     const last = S.lastBackup ? new Date(S.lastBackup).toLocaleString('vi-VN') : 'chưa có';
+    const rd = Number(S.settings.remindDays) || 3;
     return `${themeCard()}
+      <section class="card"><h2>Nhắc hẹn</h2>
+        <div class="fld"><label for="remindSel">Nhắc trước khi đến hạn</label>
+          <select id="remindSel" data-setting="remindDays">${[1, 2, 3, 5, 7].map(n => `<option value="${n}" ${n === rd ? 'selected' : ''}>${n} ngày</option>`).join('')}</select></div>
+        <p class="hint" style="margin:0">Áp dụng cho khoản định kỳ, khoản vay và thẻ tín dụng: hiện ở màn Tổng quan khi mở app và làm giờ báo thức trong file Lịch (tab Kế hoạch).</p></section>
       ${securityCard()}
       <section class="card"><h2>Sao lưu dữ liệu</h2>
         <p class="muted small" style="margin:0 0 10px">Dữ liệu chỉ lưu trên điện thoại này. Hãy sao lưu thường xuyên (lưu file vào Files/iCloud). Lần cuối: <b>${last}</b>.${vaultKey ? ' File xuất ra được <b>mã hoá bằng mật khẩu hiện tại</b>; muốn mở lại phải nhớ mật khẩu đó.' : ''}</p>
@@ -972,9 +1147,10 @@
   // ---------------------------------------------------------------- dựng màn hình
   function render(scrollTop) {
     if (locked) return;
-    $('#view').innerHTML = ({ overview: viewFinance, ledger: viewLedger, accounts: viewAccounts, grab: viewGrab, settings: viewSettings })[tab]();
+    $('#view').innerHTML = ({ overview: viewFinance, ledger: viewLedger, accounts: viewAccounts, plan: viewPlan, grab: viewGrab, settings: viewSettings })[tab]();
     $('#title').textContent = TITLES[tab];
     document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+    document.body.classList.toggle('on-settings', tab === 'settings');
     if (scrollTop) window.scrollTo(0, 0);
   }
 
@@ -1090,6 +1266,108 @@
   };
 
   A['set-theme'] = el => { applyTheme(el.dataset.t); render(); };
+
+  // ---- Nợ
+  A['add-debt'] = () => debtSheet(null);
+  A['edit-debt'] = el => { const d = debtOf(el.dataset.id); if (d) debtSheet(d); };
+  A['debt-detail'] = el => debtDetail(el.dataset.id);
+  A['pick-dkind'] = el => {
+    dKind = el.dataset.k;
+    $('#dkseg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el));
+    $('#dbf').innerHTML = debtFields(dKind, null, { name: val('f-name') || undefined });
+  };
+  A['save-debt'] = el => {
+    const kind = el.dataset.id ? debtOf(el.dataset.id).kind : dKind;
+    const name = val('f-name'), bal = getInt('f-bal'), asOf = val('f-asof');
+    if (!name) return setErr('Nhập tên khoản nợ.');
+    if (isNaN(bal)) return setErr('Nhập dư nợ hiện tại (nhập 0 nếu đã hết nợ).');
+    if (!asOf) return setErr('Chọn ngày tính dư nợ.');
+    const data = { kind, name, opening: bal, asOf, when: val('f-when') === 'start' ? 'start' : 'end' };
+    if (kind === 'loan') {
+      const rate = getDec('f-rate'), payment = getInt('f-pay'), dueDay = getInt('f-dueday');
+      if (isNaN(rate) || rate < 0) return setErr('Nhập lãi suất %/năm (ví dụ 15,99).');
+      if (isNaN(payment) || payment <= 0) return setErr('Nhập số tiền trả mỗi kỳ.');
+      if (isNaN(dueDay) || dueDay < 1 || dueDay > 31) return setErr('Nhập ngày trả hằng tháng (1–31).');
+      const fee = getDec('f-fee');
+      Object.assign(data, {
+        rate, payment, dueDay,
+        nextDue: val('f-nextdue') || L.nextMonthly(L.addDays(asOf, 1), dueDay),
+        feePct: isNaN(fee) ? 0 : fee, weekend: $('#f-weekend').checked,
+      });
+      const lp = val('f-lastpaid'); if (lp) data.lastPaid = lp; else delete data.lastPaid;
+    } else {
+      const limit = getInt('f-limit'), dueDay = getInt('f-dueday'), stmt = getInt('f-stmt');
+      if (isNaN(limit) || limit <= 0) return setErr('Nhập hạn mức thẻ.');
+      Object.assign(data, { limit, dueDay: isNaN(dueDay) ? null : dueDay, stmtDay: isNaN(stmt) ? null : stmt });
+    }
+    if (el.dataset.id) { const d = debtOf(el.dataset.id); Object.assign(d, data); if (kind === 'loan' && !data.lastPaid) delete d.lastPaid; }
+    else S.debts.push(Object.assign({ id: uid() }, data));
+    save(); closeSheet(); render(); toast('Đã lưu khoản nợ');
+  };
+  A['del-debt'] = el => {
+    const id = el.dataset.id;
+    const n = S.tx.filter(t => t.debt === id || t.acct === id).length;
+    if (n) { toast(`Khoản nợ đang có ${n} giao dịch, hãy xoá chúng trước`); return; }
+    if (!confirm('Xoá khoản nợ này?')) return;
+    S.debts = S.debts.filter(d => d.id !== id); save(); closeSheet(); render(); toast('Đã xoá khoản nợ');
+  };
+  A['pay-debt'] = el => {
+    const d = debtOf(el.dataset.id); if (!d) return;
+    const today = L.todayKey();
+    closeSheet();
+    if (d.kind === 'loan') {
+      const row = L.loanSchedule(S, d, 1)[0];
+      const date = row && row.cut <= today ? row.cut : today; // ngân hàng tự cắt tiền vào ngày cắt
+      const np = L.loanNextPayment(S, d, date);
+      txSheet(null, { type: 'debtpay', debt: d.id, amt: np.amount, interest: np.interest, date });
+    } else txSheet(null, { type: 'debtpay', debt: d.id, date: today });
+  };
+
+  // ---- Khoản định kỳ và "Sắp đến hạn"
+  A['add-rec'] = () => recSheet(null);
+  A['edit-rec'] = el => { const r = S.recurring.find(x => x.id === el.dataset.id); if (r) recSheet(r); };
+  A['rec-type'] = el => {
+    const num = id => { const x = getInt(id); return isNaN(x) ? '' : x; };
+    const v = { name: val('f-name'), amt: num('f-amt'), days: val('f-days'), acct: val('f-acct') || undefined, done: val('f-done') };
+    recType = el.dataset.t;
+    $('#recseg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.t === recType));
+    $('#recf').innerHTML = recFields(recType, null, v);
+  };
+  A['save-rec'] = el => {
+    const name = val('f-name'), amount = getInt('f-amt');
+    const days = Array.from(new Set(val('f-days').split(/[^0-9]+/).filter(Boolean).map(Number).filter(n => n >= 1 && n <= 31))).sort((a, b) => a - b);
+    if (!name) return setErr('Nhập tên khoản.');
+    if (!days.length) return setErr('Nhập ít nhất một ngày trong tháng (1–31), ví dụ 15 hoặc 5, 15.');
+    const data = { name, type: recType, amount: isNaN(amount) ? 0 : amount, days, acct: val('f-acct') || '', cat: val('f-cat2') || val('f-cat') || 'Khác', doneUpTo: val('f-done') || L.todayKey(), active: true };
+    if (el.dataset.id) Object.assign(S.recurring.find(x => x.id === el.dataset.id), data);
+    else S.recurring.push(Object.assign({ id: uid() }, data));
+    save(); closeSheet(); render(); toast('Đã lưu khoản định kỳ');
+  };
+  A['del-rec'] = el => {
+    if (!confirm('Xoá khoản định kỳ này? Các giao dịch đã ghi vẫn được giữ.')) return;
+    S.recurring = S.recurring.filter(x => x.id !== el.dataset.id); save(); closeSheet(); render(); toast('Đã xoá');
+  };
+  A['do-upcoming'] = el => {
+    const kind = el.dataset.kind, id = el.dataset.id, date = el.dataset.date, today = L.todayKey();
+    if (!L.ledgerReady(S)) { toast('Hãy thiết lập sổ tài chính trước'); tab = 'accounts'; render(true); return; }
+    if (kind === 'recurring') {
+      const r = S.recurring.find(x => x.id === id); if (!r) return;
+      txSheet(null, { type: r.type, amt: r.amount || '', acct: r.acct || undefined, cat: r.cat, note: r.name, date: date > today ? date : today }, { recur: r.id, date });
+    } else { el.dataset.id = id; A['pay-debt'](el); }
+  };
+
+  // ---- Xuất file Lịch (.ics): sự kiện lặp hằng tháng kèm báo thức trước N ngày
+  A['export-ics'] = async () => {
+    const text = L.buildIcs(S, L.todayKey(), Number(S.settings.remindDays) || 3);
+    const blob = new Blob([text], { type: 'text/calendar' }), name = 'so-tai-chinh-nhac-han.ics';
+    try {
+      const file = new File([blob], name, { type: 'text/calendar' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast('Mở file vừa tải để thêm các nhắc hẹn vào Lịch');
+  };
   A['ack-excluded'] = () => {
     if (!S.capital) return;
     S.capital.ack = L.grabExcluded(S).n; // đã hiểu: không nhắc nữa cho tới khi có thêm ca bị loại
@@ -1177,9 +1455,25 @@
     v.acct = val('f-acct') || val('f-from') || undefined;
     v.from = val('f-from') || val('f-acct') || undefined;
     v.to = val('f-to') || undefined;
+    v.debt = val('f-debt') || undefined;
     txType = el.dataset.t;
+    if (txType === 'debtpay' && !S.debts.length) { toast('Hãy thêm khoản nợ ở tab Tài khoản trước'); return; }
     $('#txseg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.t === txType));
     $('#txf').innerHTML = txFields(txType, null, v);
+    if (txType === 'debtpay') refreshDebtPay();
+  };
+  // Khoản vay: điền sẵn số tiền trả và phần lãi theo số ngày thực tế tới ngày chọn
+  const setMoneyField = (id, v) => { const e = $('#' + id); if (e) e.value = v ? L.fmtInt(v) : ''; };
+  function refreshDebtPay() {
+    const d = debtOf(val('f-debt'));
+    if (!d || d.kind !== 'loan') return;
+    const np = L.loanNextPayment(S, d, val('f-date') || L.todayKey());
+    setMoneyField('f-amt', np.amount); setMoneyField('f-int', np.interest);
+  }
+  A['pick-debt'] = el => {
+    $('#f-debt').value = el.dataset.id;
+    $('#ch-debt').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === el));
+    refreshDebtPay();
   };
   A['pick-acct'] = el => {
     const role = el.dataset.role;
@@ -1200,6 +1494,13 @@
       if (!from || !to) return setErr('Chọn tài khoản chuyển đi và nhận.');
       if (from === to) return setErr('Hai tài khoản phải khác nhau.');
       rec = { type, amount, acct: from, to, cat: '', note, date };
+    } else if (type === 'debtpay') {
+      const debt = val('f-debt'), acct = val('f-acct'), interest = getInt('f-int') || 0;
+      if (!debt) return setErr('Chọn khoản nợ.');
+      if (!acct) return setErr('Chọn tài khoản dùng để trả.');
+      if (interest > amount) return setErr('Phần lãi/phí không thể lớn hơn tổng số tiền trả.');
+      rec = { type, amount, acct, debt, interest, principal: amount - interest, cat: 'Trả nợ', note, date };
+      S.ledger.lastAcct = acct;
     } else {
       const acct = val('f-acct');
       if (!acct) return setErr('Chọn tài khoản.');
@@ -1210,12 +1511,31 @@
     if (S.capital && L.ledgerCounts(S, date) && !L.countsAfter(S.capital.date, S.capital.when, date) && (rec.acct === GRAB || rec.to === GRAB)) {
       return setErr(`Giao dịch dùng "Tiền Grab" phải nằm sau mốc vốn Grab (${dmOf(S.capital.date)}, ${whenLabel(S.capital.when)}).`);
     }
-    if (el.dataset.id) { const t = S.tx.find(x => x.id === el.dataset.id); Object.assign(t, rec); if (type !== 'transfer') delete t.to; }
-    else S.tx.push(Object.assign({ id: uid() }, rec));
+    if (el.dataset.id) {
+      const t = S.tx.find(x => x.id === el.dataset.id); Object.assign(t, rec);
+      if (type !== 'transfer') delete t.to;
+      if (type !== 'debtpay') { delete t.debt; delete t.principal; delete t.interest; }
+    } else {
+      const id = uid();
+      // Trả khoản vay đúng kỳ (gần hoặc sau ngày cắt tiền): dời kỳ tới sang tháng sau và ghi nhận ngày cắt tiền
+      let adv = null;
+      if (type === 'debtpay') { const d = debtOf(rec.debt); if (d && d.kind === 'loan') { const row = L.loanSchedule(S, d, 1)[0]; if (row && date >= L.addDays(row.cut, -10)) adv = d; } }
+      const tx = Object.assign({ id }, rec);
+      if (adv) { (adv.adv = adv.adv || []).push({ tx: id, nextDue: adv.nextDue, lastPaid: adv.lastPaid || null }); adv.lastPaid = date; adv.nextDue = L.loanDue(adv, 1); }
+      // Ghi từ "Sắp đến hạn" cho khoản định kỳ: đánh dấu đã xử lý tới ngày đó
+      if (txCtx && txCtx.recur) { const r = S.recurring.find(x => x.id === txCtx.recur); if (r) { tx.rec = r.id; tx.recDate = txCtx.date; tx.recPrev = r.doneUpTo || null; r.doneUpTo = txCtx.date; } }
+      S.tx.push(tx);
+    }
+    txCtx = null;
     save(); closeSheet(); render(); toast('Đã lưu giao dịch');
   };
   A['del-tx'] = el => {
     if (!confirm('Xoá giao dịch này?')) return;
+    const t = S.tx.find(x => x.id === el.dataset.id);
+    if (t) { // hoàn lại kỳ trả nợ / mốc định kỳ nếu giao dịch này là cái vừa làm các mốc đó dời đi
+      if (t.type === 'debtpay') { const d = debtOf(t.debt); if (d && d.adv) { const i = d.adv.findIndex(a => a.tx === t.id); if (i >= 0 && i === d.adv.length - 1) { const a = d.adv.pop(); d.nextDue = a.nextDue; if (a.lastPaid) d.lastPaid = a.lastPaid; else delete d.lastPaid; } } }
+      if (t.rec) { const r = S.recurring.find(x => x.id === t.rec); if (r && r.doneUpTo === t.recDate) r.doneUpTo = t.recPrev || undefined; }
+    }
     S.tx = S.tx.filter(x => x.id !== el.dataset.id); save(); closeSheet(); render(); toast('Đã xoá giao dịch');
   };
 
@@ -1521,6 +1841,7 @@
   document.addEventListener('change', e => {
     const t = e.target;
     // Chọn ngày là hôm nay thì gợi ý "Đầu ngày" (sắp chạy/ghi tiếp trong ngày), ngày khác thì "Cuối ngày"
+    if (t.id === 'f-date' && $('#f-debt')) refreshDebtPay(); // trả khoản vay: tính lại lãi theo số ngày tới ngày mới chọn
     if (t.id === 'f-date' && $('#whenseg')) {
       const w = t.value === L.todayKey() ? 'start' : 'end';
       $('#f-when').value = w;
