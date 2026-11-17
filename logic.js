@@ -61,6 +61,7 @@
     if (!s.priceLog.length && s.settings.fuelPriceDate && s.settings.fuelPrice > 0) {
       s.priceLog.push({ id: 'seed', date: s.settings.fuelPriceDate, price: s.settings.fuelPrice });
     }
+    repairIntegrity(s); // dọn các tham chiếu hỏng vô hại (định kỳ trỏ tới tài khoản đã xoá...)
     return s;
   }
 
@@ -434,6 +435,35 @@
     return { byId, grab, total, debts, debtTotal, net: total - debtTotal, grabImplicit: !s.capital && grab != null };
   }
 
+  // ---------- Kiểm tra toàn vẹn dữ liệu ----------
+  // Tìm các bản ghi trỏ tới tài khoản/khoản nợ không còn tồn tại (số tiền của chúng sẽ không được tính ở đâu cả).
+  function checkIntegrity(s) {
+    const issues = [];
+    const acc = new Set(s.accounts.map(a => a.id)), debts = new Set(s.debts.map(d => d.id));
+    const isAcct = id => id === GRAB_ACCT || acc.has(id);
+    const isPayer = id => isAcct(id) || debts.has(id); // thẻ tín dụng cũng dùng để chi
+    s.tx.forEach(t => {
+      if (t.type === 'debtpay') {
+        if (!debts.has(t.debt)) issues.push({ kind: 'tx', id: t.id, msg: 'Trả nợ cho khoản nợ đã bị xoá' });
+        else if (!isAcct(t.acct)) issues.push({ kind: 'tx', id: t.id, msg: 'Trả nợ từ tài khoản không còn tồn tại' });
+      } else if (t.type === 'transfer') {
+        if (!isAcct(t.acct) || !isAcct(t.to)) issues.push({ kind: 'tx', id: t.id, msg: 'Chuyển tiền có tài khoản không còn tồn tại' });
+      } else if (!isPayer(t.acct)) issues.push({ kind: 'tx', id: t.id, msg: 'Giao dịch thuộc tài khoản không còn tồn tại' });
+    });
+    s.recurring.forEach(r => { if (r.acct && !isPayer(r.acct)) issues.push({ kind: 'rec', id: r.id, msg: 'Khoản định kỳ "' + r.name + '" trỏ tới tài khoản không còn tồn tại' }); });
+    if (s.ledger && s.ledger.lastAcct && !isPayer(s.ledger.lastAcct)) issues.push({ kind: 'last', id: 'last', msg: 'Tài khoản dùng gần nhất không còn tồn tại' });
+    return issues;
+  }
+  // Sửa tự động các tham chiếu hỏng vô hại (không đụng tới giao dịch, vì cần bạn chọn lại tài khoản)
+  function repairIntegrity(s) {
+    let n = 0;
+    const acc = new Set(s.accounts.map(a => a.id)), debts = new Set(s.debts.map(d => d.id));
+    const ok = id => id === GRAB_ACCT || acc.has(id) || debts.has(id);
+    s.recurring.forEach(r => { if (r.acct && !ok(r.acct)) { r.acct = ''; n++; } });
+    if (s.ledger && s.ledger.lastAcct && !ok(s.ledger.lastAcct)) { s.ledger.lastAcct = null; n++; }
+    return n;
+  }
+
   // ---------- Nợ: khoản vay trả góp và thẻ tín dụng ----------
   // Dư nợ hiện tại = dư nợ đầu kỳ (tại ngày/mốc của khoản nợ) ± các giao dịch sau mốc đó:
   // trả nợ (giảm phần gốc), quẹt thẻ (tăng), hoàn tiền về thẻ (giảm).
@@ -676,6 +706,7 @@
 
   const api = {
     DEFAULT_SETTINGS, CATS, TYPE_LABEL, MAINT_ITEMS, TX_CATS, ACCT_KINDS, GRAB_ACCT,
+    checkIntegrity, repairIntegrity,
     debtBalance, loanSchedule, loanNextPayment, loanPayoff, loanDue, loanLastCut, loanInterest,
     addDays, daysBetween, monthDay, shiftWeekend, nextMonthly, recurringDates, upcoming, buildIcs,
     ledgerReady, countsAfter, ledgerCounts, accountBalances, unifiedEntries, periodReport, grabPot, grabExcluded, implicitCapital, mergeState,
