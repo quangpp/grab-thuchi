@@ -1172,6 +1172,7 @@
         <p class="muted small" style="margin:0 0 10px">Dữ liệu chỉ lưu trên điện thoại này. Hãy sao lưu thường xuyên (lưu file vào Files/iCloud). Lần cuối: <b>${last}</b>.${vaultKey ? ' File xuất ra được <b>mã hoá bằng mật khẩu hiện tại</b>; muốn mở lại phải nhớ mật khẩu đó.' : ''}</p>
         <div class="btn-row"><button class="btn" data-act="export">⬆︎ Xuất file</button><button class="btn" data-act="import">⬇︎ Nhập file</button></div>
         ${vaultKey ? '<button class="link" data-act="export-plain">Xuất file không mã hoá (không khuyến nghị)</button>' : ''}
+        <button class="link danger" data-act="reset-ledger">Làm lại sổ tài chính (giữ dữ liệu Grab)</button>
         <button class="link danger" data-act="wipe">Xoá toàn bộ dữ liệu</button></section>`;
   }
 
@@ -1839,6 +1840,14 @@
     render(); toast('Đã xuất file sao lưu');
   }
   A.import = () => $('#importFile').click();
+  // Chỉ xoá phần sổ tài chính (tài khoản, giao dịch, nợ, định kỳ, ngày bắt đầu sổ); ca chạy, xăng, bảo dưỡng, vốn Grab giữ nguyên
+  A['reset-ledger'] = () => {
+    if (!confirm('Làm lại sổ tài chính?\n\nSẽ xoá: ' + S.accounts.length + ' tài khoản, ' + S.tx.length + ' giao dịch, ' + S.debts.length + ' khoản nợ, ' + S.recurring.length + ' khoản định kỳ và ngày bắt đầu sổ.\nGIỮ NGUYÊN: ca chạy, đổ xăng, bảo dưỡng, vốn Grab.\n\nKhông thể hoàn tác (hãy xuất file sao lưu trước).')) return;
+    if (!confirm('Chắc chắn xoá sổ tài chính để nhập lại?')) return;
+    S.accounts = []; S.tx = []; S.debts = []; S.recurring = [];
+    S.ledger = { start: null, lastAcct: null };
+    save(); render(true); toast('Đã xoá sổ tài chính. Hãy thêm tài khoản và đặt ngày bắt đầu sổ.');
+  };
   A.wipe = () => {
     if (!confirm('Xoá TOÀN BỘ dữ liệu trên máy này? Không thể hoàn tác (hãy sao lưu trước).')) return;
     if (!confirm('Chắc chắn xoá hết?')) return;
