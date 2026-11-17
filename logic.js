@@ -452,6 +452,20 @@
     });
     s.recurring.forEach(r => { if (r.acct && !isPayer(r.acct)) issues.push({ kind: 'rec', id: r.id, msg: 'Khoản định kỳ "' + r.name + '" trỏ tới tài khoản không còn tồn tại' }); });
     if (s.ledger && s.ledger.lastAcct && !isPayer(s.ledger.lastAcct)) issues.push({ kind: 'last', id: 'last', msg: 'Tài khoản dùng gần nhất không còn tồn tại' });
+    issues.forEach(i => { i.sev = 'error'; });
+
+    // Cảnh báo (số tiền vẫn được tính, nhưng có thể không đúng ý bạn)
+    const today = todayKey(), dm = k => k.slice(8) + '/' + k.slice(5, 7);
+    const seen = {};
+    s.tx.forEach(t => {
+      if (!t.adj && t.date > today) issues.push({ kind: 'tx', id: t.id, sev: 'warn', msg: 'Giao dịch ngày ' + dm(t.date) + ' (chưa tới) đang được cộng vào số dư hiện tại' });
+      const key = [t.date, t.type, t.amount, t.acct, t.to, t.debt, t.cat].join('|');
+      if (seen[key]) issues.push({ kind: 'tx', id: t.id, sev: 'warn', msg: 'Có thể nhập trùng: ' + dm(t.date) + ' ' + (t.type === 'income' ? 'thu' : t.type === 'expense' ? 'chi' : t.type === 'debtpay' ? 'trả nợ' : 'chuyển') + ' ' + fmtMoney(t.amount) });
+      seen[key] = true;
+    });
+    s.recurring.forEach(r => {
+      if (r.doneUpTo && r.doneUpTo > today && !s.tx.some(t => t.rec === r.id && t.recDate === r.doneUpTo)) issues.push({ kind: 'rec', id: r.id, sev: 'warn', msg: 'Khoản định kỳ "' + r.name + '" đang đánh dấu đã xử lý tới ' + dm(r.doneUpTo) + ', nên không hiện ở "Sắp đến hạn"' });
+    });
     return issues;
   }
   // Sửa tự động các tham chiếu hỏng vô hại (không đụng tới giao dịch, vì cần bạn chọn lại tài khoản)

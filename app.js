@@ -1042,12 +1042,14 @@
   function integrityCard() {
     if (!L.ledgerReady(S) && !S.tx.length && !S.debts.length) return '';
     const issues = L.checkIntegrity(S);
+    const errors = issues.filter(i => i.sev === 'error'), warns = issues.filter(i => i.sev !== 'error');
     const b = L.accountBalances(S);
     const refOnly = S.tx.filter(t => S.ledger.start && !t.adj && !L.ledgerCounts(S, t.date)).length;
-    const rows = issues.map(i => `<button class="row" ${i.kind === 'tx' ? `data-act="edit-tx" data-id="${i.id}"` : 'data-act="tab" data-tab="plan"'}><div class="l"><b class="neg">⚠️ ${esc(i.msg)}</b><span class="muted">${i.kind === 'tx' ? 'Bấm để sửa và chọn lại tài khoản' : 'Bấm để xem'}</span></div></button>`).join('');
+    const rowOf = (i, cls) => `<button class="row" ${i.kind === 'tx' ? `data-act="edit-tx" data-id="${i.id}"` : i.kind === 'rec' ? `data-act="edit-rec" data-id="${i.id}"` : 'data-act="tab" data-tab="plan"'}><div class="l"><b class="${cls}">${cls === 'neg' ? '⚠️' : 'ℹ️'} ${esc(i.msg)}</b><span class="muted">Bấm để xem và sửa</span></div></button>`;
     return `<section class="card"><h2>Kiểm tra dữ liệu</h2>
-      ${issues.length ? `<div class="alert bad" style="margin:0 0 8px"><div><b>${issues.length} chỗ lệch:</b> số tiền của các giao dịch này không được tính ở đâu cả. Bấm từng dòng để sửa.</div></div><div class="card tight" style="box-shadow:none;margin:0 0 10px">${rows}</div>`
-        : '<div class="alert ok" style="margin:0 0 8px"><div>✅ Không có tham chiếu nào bị hỏng: mọi giao dịch đều trỏ tới tài khoản và khoản nợ còn tồn tại.</div></div>'}
+      ${errors.length ? `<div class="alert bad" style="margin:0 0 8px"><div><b>${errors.length} chỗ lệch:</b> số tiền của các giao dịch này không được tính ở đâu cả.</div></div><div class="card tight" style="box-shadow:none;margin:0 0 10px">${errors.map(i => rowOf(i, 'neg')).join('')}</div>` : ''}
+      ${warns.length ? `<div class="alert" style="margin:0 0 8px"><div><b>${warns.length} điểm cần xem:</b> số liệu vẫn được tính nhưng có thể chưa đúng ý bạn.</div></div><div class="card tight" style="box-shadow:none;margin:0 0 10px">${warns.map(i => rowOf(i, '')).join('')}</div>` : ''}
+      ${!issues.length ? '<div class="alert ok" style="margin:0 0 8px"><div>✅ Dữ liệu nhất quán: không có tham chiếu hỏng, giao dịch ngày tương lai hay nhập trùng.</div></div>' : ''}
       <div class="kv"><span>Tài khoản + Tiền Grab</span><b>${fmtMoney(b.total)}</b></div>
       <div class="kv"><span>Tổng dư nợ (${S.debts.length} khoản)</span><b class="neg">−${fmtMoney(b.debtTotal)}</b></div>
       <div class="kv" style="border-top:1px solid var(--line);margin-top:4px;padding-top:8px"><span>Tài sản ròng</span><b>${fmtMoney(b.net)}</b></div>
@@ -1381,7 +1383,8 @@
     if (!L.ledgerReady(S)) { toast('Hãy thiết lập sổ tài chính trước'); tab = 'accounts'; render(true); return; }
     if (kind === 'recurring') {
       const r = S.recurring.find(x => x.id === id); if (!r) return;
-      txSheet(null, { type: r.type, amt: r.amount || '', acct: r.acct || undefined, cat: r.cat, note: r.name, date: date > today ? date : today }, { recur: r.id, date });
+      // Ghi nhận vào HÔM NAY (tiền thật di chuyển lúc bạn bấm), không bao giờ ghi vào ngày chưa tới; kỳ định kỳ vẫn được đánh dấu theo ngày của kỳ đó
+      txSheet(null, { type: r.type, amt: r.amount || '', acct: r.acct || undefined, cat: r.cat, note: r.name, date: today }, { recur: r.id, date });
     } else { el.dataset.id = id; A['pay-debt'](el); }
   };
 
