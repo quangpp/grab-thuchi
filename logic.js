@@ -142,6 +142,50 @@
     return { l100: def, source: 'default', n: 0, def };
   }
 
+  // Tách km Grab / km ngoài Grab (đi làm, việc riêng) theo các mốc đổ xăng có odo.
+  // Ca có odo đầu thì xếp theo odo; ca nhập bù chỉ có km thì xếp theo ngày (ca nhập bù cùng ngày với lần đổ nằm ở khoảng sau).
+  function shiftKmOf(sh) { return sh.km != null ? Math.max(0, sh.km) : Math.max(0, (sh.odoEnd || 0) - (sh.odoStart || 0)); }
+  function shiftsIn(s, oA, oB, dA, dB) {
+    return s.shifts.filter(sh => {
+      if (sh.km == null && sh.odoStart > 0) return sh.odoStart >= oA && sh.odoStart < oB;
+      const d = dateKey(new Date(sh.start));
+      return d > dA && d <= dB;
+    });
+  }
+  function fuelSplit(s) {
+    const model = fuelModel(s);
+    const odoFills = s.fills.filter(f => f.odo > 0 && f.amount > 0).sort((a, b) => a.odo - b.odo);
+    const out = { since: null, intervals: [] };
+    if (!odoFills.length) return out;
+    // Từ lần đổ xăng gần nhất tới odo mới nhất app biết
+    const lf = odoFills[odoFills.length - 1], cur = lastKnownOdo(s);
+    if (cur > lf.odo) {
+      const sh = shiftsIn(s, lf.odo, Infinity, lf.date, '9999-12-31');
+      const grab = Math.min(cur - lf.odo, sh.reduce((a, x) => a + shiftKmOf(x), 0));
+      out.since = { odo: lf.odo, date: lf.date, cur, km: cur - lf.odo, grab, other: cur - lf.odo - grab };
+    }
+    // Giữa hai lần đổ ĐẦY liên tiếp: xăng thật của khoảng đó chia theo tỉ lệ km
+    const full = odoFills.filter(f => f.full !== false);
+    for (let i = 1; i < full.length; i++) {
+      const A = full[i - 1], B = full[i], km = B.odo - A.odo;
+      if (!(km > 0)) continue;
+      const sh = shiftsIn(s, A.odo, B.odo, A.date, B.date);
+      const grab = Math.min(km, sh.reduce((a, x) => a + shiftKmOf(x), 0));
+      let cost = 0, liters = 0;
+      s.fills.forEach(f => {
+        if (!(f.amount > 0)) return;
+        const inside = f.odo > 0 ? (f.odo > A.odo && f.odo <= B.odo) : (f.date > A.date && f.date <= B.date);
+        if (inside) { cost += f.amount; liters += litersOf(f, s); }
+      });
+      out.intervals.push({
+        fromOdo: A.odo, toOdo: B.odo, from: A.date, to: B.date, km, grab, other: km - grab, cost, liters,
+        costGrab: cost * grab / km, costOther: cost * (km - grab) / km,
+        estGrab: sh.reduce((a, x) => a + shiftCalc(x, s, model).fuel, 0), // xăng app ước tính cho các ca trong khoảng này
+      });
+    }
+    return out;
+  }
+
   // Đơn giá xăng/km HIỆN TẠI (để hiển thị): mức tiêu hao × giá xăng hôm nay
   function fuelRate(s) {
     const m = fuelModel(s);
@@ -766,7 +810,7 @@
     addDays, daysBetween, monthDay, shiftWeekend, nextMonthly, recurringDates, upcoming, buildIcs,
     ledgerReady, countsAfter, ledgerCounts, accountBalances, unifiedEntries, periodReport, grabPot, grabExcluded, implicitCapital, mergeState,
     emptyState, migrate, dateKey, keyToDate, todayKey,
-    lastKnownOdo, fuelModel, fuelRate, priceOn, litersOf, fuelPriceStatus, shiftCalc,
+    lastKnownOdo, fuelModel, fuelSplit, fuelRate, priceOn, litersOf, fuelPriceStatus, shiftCalc,
     dayRange, weekRange, monthRange, allRange, rangeFor, summarize, series,
     oilStatus, partStatus, partDueSoon, PARTS, wearSuggestion, lastDayOfPrevMonth, cashPosition,
     fmtInt, fmtKm, fmtMoney, fmtSigned, fmtShort, fmtDur, parseMoney,
