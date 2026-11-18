@@ -492,6 +492,31 @@
     return b;
   }
 
+  // Lãi thực tế của thẻ: mỗi lần trả có nhập "lãi/phí" cho ra % trên dư nợ ngay trước lần trả đó.
+  // Tính lại từ giao dịch mỗi lần nên sửa/xoá giao dịch là số tự khớp.
+  function cardInterestBase(s, d, date, excludeId) {
+    let b = Number(d.opening) || 0;
+    s.tx.forEach(t => {
+      if (t.id === excludeId || t.date > date || !countsAfter(d.asOf, d.when, t.date)) return;
+      if (t.type === 'debtpay' && t.debt === d.id) b -= (t.principal != null ? t.principal : t.amount);
+      else if (t.type === 'expense' && t.acct === d.id) b += t.amount;
+      else if (t.type === 'income' && t.acct === d.id) b -= t.amount;
+    });
+    return b;
+  }
+  function cardInterestHistory(s, d) {
+    const out = [];
+    s.tx.forEach(t => {
+      if (t.type !== 'debtpay' || t.debt !== d.id || !(t.interest > 0) || !countsAfter(d.asOf, d.when, t.date)) return;
+      const base = cardInterestBase(s, d, t.date, t.id);
+      if (base > 0) out.push({ id: t.id, date: t.date, interest: t.interest, base, pct: t.interest / base * 100 });
+    });
+    return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  }
+  // % trên một kỳ → quy ra năm, giả định một kỳ tính lãi khoảng 30 ngày
+  const CARD_PERIOD_DAYS = 30;
+  function cardPctPerYear(pct) { return pct * 365 / CARD_PERIOD_DAYS; }
+
   // Tiện ích ngày
   function addDays(k, n) { const d = keyToDate(k); d.setDate(d.getDate() + n); return dateKey(d); }
   function daysBetween(a, b) { return Math.round((keyToDate(b) - keyToDate(a)) / 864e5); }
@@ -721,7 +746,7 @@
   const api = {
     DEFAULT_SETTINGS, CATS, TYPE_LABEL, MAINT_ITEMS, TX_CATS, ACCT_KINDS, GRAB_ACCT,
     checkIntegrity, repairIntegrity,
-    debtBalance, loanSchedule, loanNextPayment, loanPayoff, loanDue, loanLastCut, loanInterest,
+    debtBalance, cardInterestBase, cardInterestHistory, cardPctPerYear, loanSchedule, loanNextPayment, loanPayoff, loanDue, loanLastCut, loanInterest,
     addDays, daysBetween, monthDay, shiftWeekend, nextMonthly, recurringDates, upcoming, buildIcs,
     ledgerReady, countsAfter, ledgerCounts, accountBalances, unifiedEntries, periodReport, grabPot, grabExcluded, implicitCapital, mergeState,
     emptyState, migrate, dateKey, keyToDate, todayKey,

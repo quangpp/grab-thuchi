@@ -881,7 +881,8 @@
         <div class="chips" id="ch-debt">${S.debts.map(d => `<button type="button" class="chip ${d.id === debt ? 'on' : ''}" data-act="pick-debt" data-id="${d.id}">${esc(debtLabel(d))}</button>`).join('')}</div>
         <input type="hidden" id="f-debt" value="${esc(debt)}">
         <label class="l">Trả từ tài khoản</label>${acctChips('acct', acct)}
-        ${moneyField('f-int', 'Trong đó lãi / phí', intr === undefined ? '' : intr, { hint: 'Phần lãi và phí tính là chi; phần còn lại là trả gốc, làm giảm dư nợ.' })}`;
+        ${moneyField('f-int', 'Trong đó lãi / phí', intr === undefined ? '' : intr, { hint: 'Phần lãi và phí tính là chi; phần còn lại là trả gốc, làm giảm dư nợ.' })}
+        <div class="hint" id="int-pct" style="margin:-6px 0 10px"></div>`;
     } else {
       const acct = validAcct(v.acct || (t ? t.acct : ''), type === 'expense');
       const sel = v.cat || (t ? t.cat : L.TX_CATS[type][0]);
@@ -905,6 +906,7 @@
       <div class="err" id="err"></div>
       <button class="btn primary lg" data-act="save-tx" data-id="${t ? t.id : ''}">${t ? 'Lưu thay đổi' : 'Lưu'}</button>
       ${t ? `<button class="link danger" data-act="del-tx" data-id="${t.id}">Xoá giao dịch</button>` : ''}`);
+    updateIntPct();
   }
 
   // ---------------------------------------------------------------- nợ, khoản định kỳ, nhắc hẹn
@@ -1032,10 +1034,22 @@
         <div class="kv"><span>Còn khả dụng</span><b>${fmtMoney(avail)} (đã dùng ${pct}%)</b></div>
         ${d.stmtDay ? `<div class="kv"><span>Ngày sao kê</span><b>ngày ${d.stmtDay}</b></div>` : ''}
         ${d.dueDay ? `<div class="kv"><span>Đến hạn thanh toán</span><b>ngày ${d.dueDay} hằng tháng</b></div>` : ''}
+        ${cardInterestBlock(d, bal)}
         <div class="hint" style="margin:6px 0 10px">Quẹt thẻ: ghi giao dịch Chi và chọn "Thẻ ${esc(d.name)}" làm tài khoản. Trả thẻ: dùng nút bên dưới.</div>
         <button class="btn primary lg" data-act="pay-debt" data-id="${d.id}">Ghi trả thẻ</button>`;
     }
     openSheet(debtLabel(d), body + `<button class="link" data-act="edit-debt" data-id="${d.id}">Sửa thông tin khoản nợ</button>`);
+  }
+
+  // Lãi thực tế của thẻ, tính từ những lần trả có nhập lãi/phí
+  function cardInterestBlock(d, bal) {
+    const h = L.cardInterestHistory(S, d);
+    if (!h.length) return '<div class="hint" style="margin:6px 0 4px">Mỗi lần trả thẻ, nhập số lãi/phí ngân hàng tính ở ô "Trong đó lãi / phí". App sẽ tự cho biết đó là bao nhiêu % dư nợ.</div>';
+    const last = h[h.length - 1], recent = h.slice(-3).reverse();
+    return `<div class="kv" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span>Lãi gần nhất</span><b>${pctStr(last.pct)}% dư nợ ≈ ${pctStr(L.cardPctPerYear(last.pct))}%/năm</b></div>
+      ${recent.map(r => `<div class="kv" style="font-size:13.5px"><span>${dmOf(r.date)} · lãi/phí ${fmtMoney(r.interest)}</span><span class="muted">trên dư nợ ${fmtMoney(r.base)} = ${pctStr(r.pct)}%</span></div>`).join('')}
+      ${bal > 0 ? `<div class="kv"><span>Nếu để nguyên dư nợ hiện tại</span><b>lãi kỳ tới ≈ ${fmtMoney(Math.round(bal * last.pct / 100))}</b></div>` : ''}
+      <div class="hint" style="margin:0 0 6px">Ước tính theo % của lần gần nhất; số thật theo sao kê. Quy ra năm là gần đúng (kỳ ~30 ngày, và khoản lãi có thể gồm cả phí).</div>`;
   }
 
   // ---------------------------------------------------------------- kiểm tra dữ liệu
@@ -1500,7 +1514,19 @@
   };
   // Khoản vay: điền sẵn số tiền trả và phần lãi theo số ngày thực tế tới ngày chọn
   const setMoneyField = (id, v) => { const e = $('#' + id); if (e) e.value = v ? L.fmtInt(v) : ''; };
+  const pctStr = n => n.toFixed(2).replace('.', ',');
+  // Thẻ: nhập lãi/phí thì hiện luôn bằng bao nhiêu % dư nợ (và quy ra năm)
+  function updateIntPct() {
+    const box = $('#int-pct'); if (!box) return;
+    const d = debtOf(val('f-debt')), intr = getInt('f-int');
+    if (!d || d.kind !== 'card' || isNaN(intr) || intr <= 0) { box.textContent = ''; return; }
+    const sv = $('[data-act="save-tx"]'), base = L.cardInterestBase(S, d, val('f-date') || L.todayKey(), sv && sv.dataset.id);
+    if (base <= 0) { box.textContent = 'Thẻ chưa có dư nợ tại ngày này nên chưa tính được %.'; return; }
+    const pct = intr / base * 100;
+    box.innerHTML = `Lãi/phí này = <b>${pctStr(pct)}%</b> dư nợ thẻ trước khi trả (${fmtMoney(base)}) ≈ <b>${pctStr(L.cardPctPerYear(pct))}%/năm</b> nếu kỳ tính lãi khoảng 30 ngày.`;
+  }
   function refreshDebtPay() {
+    updateIntPct();
     const d = debtOf(val('f-debt'));
     if (!d || d.kind !== 'loan') return;
     const np = L.loanNextPayment(S, d, val('f-date') || L.todayKey());
@@ -1887,6 +1913,7 @@
       t.value = d ? L.fmtInt(Number(d)) : '';
       if (t.id && t.id.indexOf('f-w-') === 0) updateCheckSummary();
       if (t.id === 'f-amt' || t.id === 'f-ppl') updateFillLiters();
+      if (t.id === 'f-int') updateIntPct();
     }
   });
 
