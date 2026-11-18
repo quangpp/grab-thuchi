@@ -1584,12 +1584,12 @@
       if (type === 'debtpay') { const d = debtOf(rec.debt); if (d && d.kind === 'loan') { const row = L.loanSchedule(S, d, 1)[0]; if (row && date >= L.addDays(row.cut, -10)) adv = d; } }
       const tx = Object.assign({ id }, rec);
       if (adv) { (adv.adv = adv.adv || []).push({ tx: id, nextDue: adv.nextDue, lastPaid: adv.lastPaid || null }); adv.lastPaid = date; adv.nextDue = L.loanDue(adv, 1); }
-      // Trả thẻ trong khoảng 10 ngày trước tới 3 ngày sau ngày đến hạn: coi là đã trả kỳ đó, hết nhắc
+      // Trả thẻ (dù một phần) lúc nào trong kỳ, tới 3 ngày sau ngày đến hạn: coi là đã trả kỳ đó, hết nhắc; kỳ sau nhắc lại
       if (type === 'debtpay') {
         const cd = debtOf(rec.debt);
         if (cd && cd.kind === 'card' && cd.dueDay) {
-          const k = L.nextMonthly(L.addDays(date, -3), cd.dueDay), gap = L.daysBetween(date, k);
-          if (gap <= 10 && gap >= -3) { (cd.paidStack = cd.paidStack || []).push({ tx: id, prev: cd.paidDue || null }); cd.paidDue = k; }
+          const k = L.nextMonthly(L.addDays(date, -3), cd.dueDay); // hạn gần nhất tính từ 3 ngày trước ngày trả
+          (cd.paidStack = cd.paidStack || []).push({ tx: id, prev: cd.paidDue || null }); cd.paidDue = k;
         }
       }
       // Ghi từ "Sắp đến hạn" cho khoản định kỳ: đánh dấu đã xử lý tới ngày đó
