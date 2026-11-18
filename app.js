@@ -498,7 +498,7 @@
 
     const maint = sortedDesc(S.maint, m => m.odo).slice(0, 15);
     const maintList = maint.length ? `<section class="card tight"><div class="group-h">Lịch sử bảo dưỡng</div>${maint.map(m =>
-      `<button class="row" data-act="edit-maint" data-id="${m.id}"><div class="l"><b>${esc(m.item)}</b><span class="muted">${keyLabel(m.date)} · odo ${fmtInt(m.odo)}${m.note ? ' · ' + esc(m.note) : ''}</span></div><div class="amt">${fmtMoney(m.cost)}</div></button>`).join('')}</section>` : '';
+      `<button class="row" data-act="edit-maint" data-id="${m.id}"><div class="l"><b>${esc(m.item)}</b><span class="muted">${keyLabel(m.date)} · odo ${fmtInt(m.odo)}${m.noMoney ? ' · không trừ Tiền Grab' : ''}${m.note ? ' · ' + esc(m.note) : ''}</span></div><div class="amt">${fmtMoney(m.cost)}</div></button>`).join('')}</section>` : '';
 
     return head + oilCard + rates + fillList + maintList;
   }
@@ -541,6 +541,8 @@
       <input type="hidden" id="f-item" value="${esc(item)}">
       ${moneyField('f-amt', 'Chi phí (gồm công)', m ? m.cost : '', { focus: !m })}
       ${intField('f-odo', 'Odo lúc làm', m ? m.odo : L.lastKnownOdo(S), { suf: 'km' })}
+      <label class="check"><input type="checkbox" id="f-nomoney" ${m && m.noMoney ? 'checked' : ''}> Không trừ vào Tiền Grab (chi phí đã ghi ở nơi khác, vd quẹt thẻ)</label>
+      <div class="hint" style="margin:-4px 0 8px">Chỉ lưu làm mốc bảo dưỡng và để tham khảo hao mòn; không vào Tiền Grab, quỹ bảo trì và báo cáo thu chi, nên không bị tính hai lần.</div>
       <label class="check"><input type="checkbox" id="f-fromfund" ${!m || m.fromFund !== false ? 'checked' : ''}> Trả từ quỹ bảo trì để riêng</label>
       ${textField('f-note', 'Ghi chú (tuỳ chọn)', m ? m.note : '', 'loại nhớt, tiệm...')}
       ${dateField('f-date', 'Ngày', m ? m.date : L.todayKey())}
@@ -1767,7 +1769,7 @@
     const cost = getInt('f-amt'), odo = getInt('f-odo');
     if (isNaN(cost) || cost < 0) return setErr('Nhập chi phí.');
     if (isNaN(odo) || odo <= 0) return setErr('Nhập odo lúc làm.');
-    const data = { item: val('f-item') || 'Khác', cost, odo, note: val('f-note'), date: val('f-date') || L.todayKey(), fromFund: $('#f-fromfund').checked };
+    const data = { item: val('f-item') || 'Khác', cost, odo, note: val('f-note'), date: val('f-date') || L.todayKey(), fromFund: $('#f-fromfund').checked, noMoney: $('#f-nomoney').checked };
     if (el.dataset.id) Object.assign(S.maint.find(x => x.id === el.dataset.id), data);
     else S.maint.push(Object.assign({ id: uid() }, data));
     save(); closeSheet(); render(); toast('Đã lưu bảo dưỡng');

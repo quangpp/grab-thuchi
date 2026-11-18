@@ -336,7 +336,7 @@
     });
     s.fills.forEach(f => { if (after(f.date)) p.fuelPaid += f.amount; });
     s.maint.forEach(m => {
-      if (!after(m.date)) return;
+      if (!after(m.date) || m.noMoney) return; // noMoney: chi phí đã ghi ở nơi khác (vd quẹt thẻ), chỉ lưu để làm mốc/tham khảo
       p.repairPaid += m.cost;
       if (m.fromFund !== false) p.repairFromFund += m.cost; // mặc định trả từ quỹ để riêng
     });
@@ -686,7 +686,7 @@
       out.push({ src: 'shift', id: sh.id, date: k, type: 'income', amount: c.income, cat: 'Grab · thu nhập ca', note: '', acct: GRAB_ACCT, at: sh.start });
     });
     s.fills.forEach(f => { if (inR(f.date)) out.push({ src: 'fill', id: f.id, date: f.date, type: 'expense', amount: f.amount, cat: 'Grab · Xăng', note: '', acct: GRAB_ACCT }); });
-    s.maint.forEach(m => { if (inR(m.date)) out.push({ src: 'maint', id: m.id, date: m.date, type: 'expense', amount: m.cost, cat: 'Grab · Bảo dưỡng xe', note: m.item, acct: GRAB_ACCT }); });
+    s.maint.forEach(m => { if (inR(m.date) && !m.noMoney) out.push({ src: 'maint', id: m.id, date: m.date, type: 'expense', amount: m.cost, cat: 'Grab · Bảo dưỡng xe', note: m.item, acct: GRAB_ACCT }); });
     s.expenses.forEach(e => {
       if (!inR(e.date) || e.type === 'saving') return;
       out.push({
