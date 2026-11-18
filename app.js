@@ -501,21 +501,28 @@
       `<button class="row" data-act="edit-maint" data-id="${m.id}"><div class="l"><b>${esc(m.item)}</b><span class="muted">${keyLabel(m.date)} · odo ${fmtInt(m.odo)}${m.noMoney ? ' · không trừ Tiền Grab' : ''}${m.note ? ' · ' + esc(m.note) : ''}</span></div><div class="amt">${fmtMoney(m.cost)}</div></button>`).join('')}</section>` : '';
 
     // Km Grab và km ngoài Grab (đi làm, việc riêng) theo mốc đổ xăng
+    // Mốc thống kê: lần đầu lấy theo lần đổ xăng có odo gần nhất, sau đó giữ nguyên (bấm "Đặt lại mốc" để đổi)
+    if (!S.settings.splitAnchor) {
+      const lf = S.fills.filter(f => f.odo > 0 && f.amount > 0).sort((a, b) => b.odo - a.odo)[0];
+      if (lf) { S.settings.splitAnchor = { odo: lf.odo, date: lf.date }; save(); }
+    }
     const sp = L.fuelSplit(S);
     let splitCard = '';
     if (sp.since || sp.intervals.length) {
       const pc = (a, b) => b > 0 ? Math.round(a / b * 100) + '%' : '0%';
       splitCard = `<section class="card"><div class="eyebrow">Km Grab và km đi làm</div>
-        ${sp.since ? `<div class="group-h" style="margin-top:6px">Từ lần đổ xăng gần nhất (${dmOf(sp.since.date)}, odo ${fmtInt(sp.since.odo)})</div>
+        ${sp.since ? `<div class="group-h" style="margin-top:6px">Cộng dồn từ mốc ${dmOf(sp.since.date)} (odo ${fmtInt(sp.since.odo)})</div>
           <div class="kv"><span>Tổng km đã đi (tới odo ${fmtInt(sp.since.cur)})</span><b>${fmtInt(sp.since.km)} km</b></div>
           <div class="kv"><span>Chạy Grab</span><b>${fmtInt(sp.since.grab)} km (${pc(sp.since.grab, sp.since.km)})</b></div>
-          <div class="kv"><span>Ngoài Grab (đi làm, việc riêng)</span><b>${fmtInt(sp.since.other)} km</b></div>` : ''}
+          <div class="kv"><span>Ngoài Grab (đi làm, việc riêng)</span><b>${fmtInt(sp.since.other)} km</b></div>
+          ${sp.done ? `<div class="kv" style="font-size:13.5px"><span class="muted">Xăng thật đã tính xong (${sp.done.n} khoảng đổ đầy)</span><span>Grab ≈ ${fmtMoney(Math.round(sp.done.costGrab))} · ngoài Grab ≈ ${fmtMoney(Math.round(sp.done.costOther))}</span></div>` : ''}
+          <button class="link" data-act="reset-split" style="margin:2px 0 0">Đặt lại mốc về lần đổ xăng gần nhất</button>` : ''}
         ${sp.intervals.length ? `<div class="group-h" style="margin-top:10px">Giữa các lần đổ đầy bình (xăng thật)</div>
           ${sp.intervals.slice(-3).reverse().map(i => `<div style="padding:8px 0;border-top:1px solid var(--line)">
             <div class="kv" style="margin:0"><span>${dmOf(i.from)} → ${dmOf(i.to)} · ${fmtInt(i.km)} km</span><b>${fmtMoney(Math.round(i.cost))}</b></div>
             <div class="kv" style="margin:0;font-size:13.5px"><span class="muted">Grab ${fmtInt(i.grab)} km</span><span>≈ ${fmtMoney(Math.round(i.costGrab))} <span class="muted">(app ước tính ${fmtMoney(Math.round(i.estGrab))})</span></span></div>
             <div class="kv" style="margin:0;font-size:13.5px"><span class="muted">Ngoài Grab ${fmtInt(i.other)} km</span><span>≈ ${fmtMoney(Math.round(i.costOther))}</span></div></div>`).join('')}` : ''}
-        <div class="hint" style="margin:6px 0 0">Km ngoài Grab = km xe đi (theo odo) − km các ca. Tiền xăng mỗi khoảng chia theo tỉ lệ km, nên là ước tính; ca nhập bù chỉ có km được xếp theo ngày. Odo càng được cập nhật đều thì số càng sát.</div></section>`;
+        <div class="hint" style="margin:6px 0 0">Km ngoài Grab = km xe đi (theo odo) − km các ca. Tiền xăng mỗi khoảng chia theo tỉ lệ km, nên là ước tính; ca nhập bù chỉ có km được xếp theo ngày. Mốc chỉ đặt một lần, đổ xăng thêm không làm số cộng dồn bị reset; con số cập nhật mỗi khi bạn nhập odo mới.</div></section>`;
     }
     return head + oilCard + splitCard + rates + fillList + maintList;
   }
@@ -1776,6 +1783,12 @@
     save(); closeSheet(); render(); toast('Đã lưu lần đổ xăng');
   };
   A['del-fill'] = el => { if (confirm('Xoá lần đổ xăng này?')) { S.fills = S.fills.filter(x => x.id !== el.dataset.id); save(); closeSheet(); render(); } };
+  A['reset-split'] = () => {
+    const lf = S.fills.filter(f => f.odo > 0 && f.amount > 0).sort((a, b) => b.odo - a.odo)[0];
+    if (!lf) return;
+    if (!confirm('Đặt lại mốc về lần đổ xăng gần nhất (' + dmOf(lf.date) + ', odo ' + fmtInt(lf.odo) + ')? Số cộng dồn sẽ bắt đầu đếm lại từ đây.')) return;
+    S.settings.splitAnchor = { odo: lf.odo, date: lf.date }; save(); render(); toast('Đã đặt lại mốc');
+  };
   A['add-maint'] = el => maintSheet(null, el.dataset.item);
   A['edit-maint'] = el => { const m = S.maint.find(x => x.id === el.dataset.id); if (m) maintSheet(m); };
   A['pick-item'] = el => {

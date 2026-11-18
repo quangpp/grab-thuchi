@@ -9,6 +9,7 @@
     fuelL100: 2.2,      // lít / 100 km (mặc định cho tới khi học được từ các lần đổ xăng)
     wearPerKm: 240,     // đ/km hao mòn (nhớt, lốp, phanh, sên nhông...)
     oilInterval: 2000,  // km giữa hai lần thay nhớt
+    splitAnchor: null,  // { odo, date }: mốc bắt đầu thống kê km Grab / km ngoài Grab (đặt lần đầu theo lần đổ xăng gần nhất)
     tireInterval: 15000, // km giữa hai lần thay lốp (ước tính, chỉnh theo thực tế)
     brakeInterval: 10000, // km giữa hai lần thay má phanh (ước tính)
     chainInterval: 15000, // km giữa hai lần thay sên nhông dĩa (ước tính)
@@ -157,12 +158,14 @@
     const odoFills = s.fills.filter(f => f.odo > 0 && f.amount > 0).sort((a, b) => a.odo - b.odo);
     const out = { since: null, intervals: [] };
     if (!odoFills.length) return out;
-    // Từ lần đổ xăng gần nhất tới odo mới nhất app biết
+    // Tính cộng dồn từ MỐC (đặt lần đầu theo lần đổ xăng gần nhất, sau đó giữ nguyên dù đổ thêm) tới odo mới nhất app biết
     const lf = odoFills[odoFills.length - 1], cur = lastKnownOdo(s);
-    if (cur > lf.odo) {
-      const sh = shiftsIn(s, lf.odo, Infinity, lf.date, '9999-12-31');
-      const grab = Math.min(cur - lf.odo, sh.reduce((a, x) => a + shiftKmOf(x), 0));
-      out.since = { odo: lf.odo, date: lf.date, cur, km: cur - lf.odo, grab, other: cur - lf.odo - grab };
+    const anchor = s.settings.splitAnchor && s.settings.splitAnchor.odo > 0 ? s.settings.splitAnchor : { odo: lf.odo, date: lf.date };
+    out.anchor = anchor;
+    if (cur > anchor.odo) {
+      const sh = shiftsIn(s, anchor.odo, Infinity, anchor.date, '9999-12-31');
+      const grab = Math.min(cur - anchor.odo, sh.reduce((a, x) => a + shiftKmOf(x), 0));
+      out.since = { odo: anchor.odo, date: anchor.date, cur, km: cur - anchor.odo, grab, other: cur - anchor.odo - grab };
     }
     // Giữa hai lần đổ ĐẦY liên tiếp: xăng thật của khoảng đó chia theo tỉ lệ km
     const full = odoFills.filter(f => f.full !== false);
@@ -183,6 +186,9 @@
         estGrab: sh.reduce((a, x) => a + shiftCalc(x, s, model).fuel, 0), // xăng app ước tính cho các ca trong khoảng này
       });
     }
+    // Xăng thật đã tính xong của các khoảng đủ (đổ đầy tới đổ đầy) nằm sau mốc
+    const done = out.intervals.filter(i => i.fromOdo >= anchor.odo);
+    if (done.length) out.done = done.reduce((a, i) => ({ km: a.km + i.km, grab: a.grab + i.grab, other: a.other + i.other, cost: a.cost + i.cost, costGrab: a.costGrab + i.costGrab, costOther: a.costOther + i.costOther, n: a.n + 1 }), { km: 0, grab: 0, other: 0, cost: 0, costGrab: 0, costOther: 0, n: 0 });
     return out;
   }
 
