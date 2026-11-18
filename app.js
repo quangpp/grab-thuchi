@@ -447,16 +447,18 @@
     const legacyShifts = S.shifts.filter(sh => sh.fuelPrice == null).length;
     const sug = L.wearSuggestion(S);
 
-    let oilCard;
-    if (!oil.has) {
-      oilCard = `<div class="alert"><div>🛢️ <b>Chưa có mốc thay nhớt.</b> Sau khi thay, bấm "Ghi thay nhớt" để bắt đầu đếm km (nhắc sau mỗi ${fmtInt(oil.iv)} km).</div></div>`;
-    } else {
-      const cls = oil.remaining < 0 ? 'over' : oil.remaining <= 300 ? 'warn' : '';
-      oilCard = `<section class="card"><div class="eyebrow">Thay nhớt</div>
-        <div class="progress ${cls}"><i style="width:${Math.round(oil.pct * 100)}%"></i></div>
-        <div class="kv"><span>Đã đi từ lần thay (odo ${fmtInt(oil.lastOdo)})</span><b>${fmtInt(oil.since)} km</b></div>
-        <div class="kv"><span>${oil.remaining >= 0 ? 'Còn lại tới hạn' : 'Quá hạn'}</span><b class="${oil.remaining < 0 ? 'neg' : ''}">${fmtInt(Math.abs(oil.remaining))} km</b></div></section>`;
-    }
+    const oilCard = `<section class="card"><div class="eyebrow">Bảo dưỡng định kỳ</div>
+      ${L.PARTS.map(p => {
+        const st = L.partStatus(S, p.item);
+        if (!st.has) return `<div class="part"><div class="kv" style="margin:0"><span>${p.icon} ${esc(p.item)}</span><button class="btn sm" data-act="add-maint" data-item="${esc(p.item)}" style="margin:0">Ghi mốc</button></div>
+          <div class="hint" style="margin:2px 0 8px">Chưa có mốc. Ghi lần thay gần nhất (odo, chi phí nhập 0 nếu không nhớ) để đếm km, chu kỳ ${fmtInt(st.iv)} km.</div></div>`;
+        const cls = st.remaining < 0 ? 'over' : L.partDueSoon(st) ? 'warn' : '';
+        return `<div class="part"><div class="kv" style="margin:0"><span>${p.icon} ${esc(p.item)}</span><b class="${st.remaining < 0 ? 'neg' : ''}">${st.remaining >= 0 ? 'còn ' + fmtInt(st.remaining) + ' km' : 'quá hạn ' + fmtInt(-st.remaining) + ' km'}</b></div>
+          <div class="progress ${cls}"><i style="width:${Math.round(st.pct * 100)}%"></i></div>
+          <div class="muted small">Đã đi ${fmtInt(st.since)}/${fmtInt(st.iv)} km kể từ lần thay (odo ${fmtInt(st.lastOdo)})</div>
+          <button class="link" data-act="add-maint" data-item="${esc(p.item)}" style="margin:2px 0 12px">Ghi lần thay mới ›</button></div>`;
+      }).join('')}
+      <div class="hint" style="margin:0">Chu kỳ chỉnh ở Grab → Thông số. Số km ban đầu chỉ là ước tính, hãy chỉnh theo sổ bảo dưỡng và thực tế của bạn.</div></section>`;
 
     const head = `<section class="card"><div class="eyebrow">Odo gần nhất</div>
       <div class="big">${fmtInt(cur)} <span class="muted" style="font-size:18px">km</span></div>
@@ -599,9 +601,11 @@
     let html = '';
     // banner nhắc nhớt / sao lưu
     const oil = L.oilStatus(S);
-    if (oil.has && oil.remaining <= 300) {
-      html += `<div class="alert ${oil.remaining < 0 ? 'bad' : ''}"><div>🛢️ <b>${oil.remaining < 0 ? 'Quá hạn thay nhớt ' + fmtInt(-oil.remaining) + ' km' : 'Sắp tới hạn thay nhớt (còn ' + fmtInt(oil.remaining) + ' km)'}.</b></div></div>`;
-    } else if (!oil.has) {
+    L.PARTS.map(p => L.partStatus(S, p.item)).filter(L.partDueSoon).forEach(st => {
+      const nm = st.item === 'Nhớt' ? 'nhớt' : st.item.toLowerCase();
+      html += `<div class="alert ${st.remaining < 0 ? 'bad' : ''}"><div>${st.icon} <b>${st.remaining < 0 ? 'Quá hạn thay ' + nm + ' ' + fmtInt(-st.remaining) + ' km' : 'Sắp tới hạn thay ' + nm + ' (còn ' + fmtInt(st.remaining) + ' km)'}.</b></div></div>`;
+    });
+    if (!oil.has) {
       html += `<div class="alert"><div>🛢️ <b>Chưa có mốc thay nhớt.</b> Khi thay, ghi ở Grab → Xe để app nhắc lần sau.</div></div>`;
     }
     if ((S.shifts.length + S.expenses.length) > 0) {
@@ -1164,6 +1168,10 @@
         ${nField('fuelL100', 'Mức tiêu hao ước tính', st.fuelL100, 'lít/100km', 'dec', 'Chỉ dùng tới khi tool học được số thật từ các lần đổ xăng.')}
         ${nField('wearPerKm', 'Hao mòn xe', st.wearPerKm, 'đ/km', 'int', 'Nhớt + lốp + phanh + sên nhông... Mặc định 240đ/km, chỉnh theo thực tế (giá nhớt, lốp... ở tiệm của bạn).')}
         ${nField('oilInterval', 'Chu kỳ thay nhớt', st.oilInterval, 'km', 'int')}
+        ${nField('tireInterval', 'Chu kỳ thay lốp', st.tireInterval, 'km', 'int', 'Các chu kỳ lốp, phanh, sên, bugi là số ước tính; chỉnh theo sổ bảo dưỡng xe của bạn.')}
+        ${nField('brakeInterval', 'Chu kỳ thay má phanh', st.brakeInterval, 'km', 'int')}
+        ${nField('chainInterval', 'Chu kỳ thay sên nhông dĩa', st.chainInterval, 'km', 'int')}
+        ${nField('plugInterval', 'Chu kỳ thay bugi / lọc gió', st.plugInterval, 'km', 'int')}
       </section>
       <section class="card"><h2>Cách tính</h2><div class="muted small" style="line-height:1.55">
         <b>Xăng của ca</b> = km × mức tiêu hao (lít/100km) × giá xăng của ngày chạy.<br>

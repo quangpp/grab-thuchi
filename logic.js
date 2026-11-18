@@ -9,6 +9,10 @@
     fuelL100: 2.2,      // lít / 100 km (mặc định cho tới khi học được từ các lần đổ xăng)
     wearPerKm: 240,     // đ/km hao mòn (nhớt, lốp, phanh, sên nhông...)
     oilInterval: 2000,  // km giữa hai lần thay nhớt
+    tireInterval: 15000, // km giữa hai lần thay lốp (ước tính, chỉnh theo thực tế)
+    brakeInterval: 10000, // km giữa hai lần thay má phanh (ước tính)
+    chainInterval: 15000, // km giữa hai lần thay sên nhông dĩa (ước tính)
+    plugInterval: 10000, // km giữa hai lần thay bugi / lọc gió (ước tính)
     remindDays: 3,      // nhắc trước bao nhiêu ngày khi khoản nợ/định kỳ đến hạn
     lockMinutes: 5,     // tự khoá khi rời app quá số phút này (0 = khoá ngay khi thoát app); chỉ có tác dụng khi đã đặt mật khẩu
   };
@@ -277,14 +281,26 @@
   }
 
   // ---------- Bảo dưỡng ----------
-  function oilStatus(s) {
-    const iv = Number(s.settings.oilInterval) || 2000;
+  // Các hạng mục có chu kỳ theo km (cài ở Thông số xe); mỗi lần ghi bảo dưỡng đúng hạng mục là một mốc mới
+  const PARTS = [
+    { item: 'Nhớt', key: 'oilInterval', icon: '🛢️', def: 2000 },
+    { item: 'Lốp', key: 'tireInterval', icon: '🛞', def: 15000 },
+    { item: 'Má phanh', key: 'brakeInterval', icon: '🛑', def: 10000 },
+    { item: 'Sên nhông dĩa', key: 'chainInterval', icon: '⛓️', def: 15000 },
+    { item: 'Bugi / lọc gió', key: 'plugInterval', icon: '🔧', def: 10000 },
+  ];
+  function partStatus(s, item) {
+    const p = PARTS.find(x => x.item === item) || PARTS[0];
+    const iv = Number(s.settings[p.key]) || p.def;
     const cur = lastKnownOdo(s);
-    const last = s.maint.filter(m => m.item === 'Nhớt').sort((a, b) => b.odo - a.odo)[0];
-    if (!last) return { has: false, iv, cur };
-    const since = cur - last.odo;
-    return { has: true, iv, cur, since, remaining: iv - since, lastOdo: last.odo, pct: Math.max(0, Math.min(1, since / iv)) };
+    const last = s.maint.filter(m => m.item === p.item).sort((a, b) => b.odo - a.odo)[0];
+    if (!last) return { has: false, iv, cur, item: p.item, icon: p.icon };
+    const since = Math.max(0, cur - last.odo);
+    return { has: true, iv, cur, item: p.item, icon: p.icon, since, remaining: iv - since, lastOdo: last.odo, lastDate: last.date, pct: Math.max(0, Math.min(1, since / iv)) };
   }
+  const oilStatus = s => partStatus(s, 'Nhớt');
+  // Sắp tới hạn: còn ≤ 300 km với nhớt, ≤ 10% chu kỳ với các hạng mục khác
+  const partDueSoon = st => st.has && st.remaining <= (st.item === 'Nhớt' ? 300 : Math.round(st.iv * 0.1));
 
   // Gợi ý hiệu chỉnh đơn giá hao mòn: tổng tiền bảo dưỡng thật / tổng km xe đi (kể từ mốc bảo dưỡng đầu tiên)
   function wearSuggestion(s) {
@@ -752,7 +768,7 @@
     emptyState, migrate, dateKey, keyToDate, todayKey,
     lastKnownOdo, fuelModel, fuelRate, priceOn, litersOf, fuelPriceStatus, shiftCalc,
     dayRange, weekRange, monthRange, allRange, rangeFor, summarize, series,
-    oilStatus, wearSuggestion, lastDayOfPrevMonth, cashPosition,
+    oilStatus, partStatus, partDueSoon, PARTS, wearSuggestion, lastDayOfPrevMonth, cashPosition,
     fmtInt, fmtKm, fmtMoney, fmtSigned, fmtShort, fmtDur, parseMoney,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
