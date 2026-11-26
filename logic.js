@@ -42,10 +42,10 @@
       expenses: [],      // { id,date,amount,type,category,note }
       maint: [],         // { id,date,odo,item,cost,note }
       odoLog: [],        // { id,date,odo }
-      capital: null,     // { date: 'YYYY-MM-DD', total, fund } — vốn ban đầu (không tính là thu nhập)
+      capital: null,     // { date: 'YYYY-MM-DD', total, when } — vốn ban đầu (không tính là thu nhập)
       checks: [],        // { id,at,wallets,total,expected,diff } — các lần kiểm kê tiền thật
       adjusts: [],       // { id,date,amount,note } — điều chỉnh sau kiểm kê
-      fundPuts: [],      // { id,date,amount } — các lần tách tiền ra để riêng cho quỹ bảo trì
+      fundPuts: [],      // không còn dùng (đã bỏ quỹ bảo trì để riêng); giữ lại để dữ liệu cũ không mất
       priceLog: [],      // { id,date,price } — các lần cập nhật giá xăng thủ công (giá/lít)
       // Sổ tài chính cá nhân
       ledger: { start: null, lastAcct: null }, // start = ngày chốt (số dư đầu kỳ tính tới hết ngày này)
@@ -362,7 +362,7 @@
     return { perKm: cost / km, km, cost };
   }
 
-  // ---------- Tiền thật đang cầm & quỹ sửa xe ----------
+  // ---------- Tiền thật đang cầm ----------
   function lastDayOfPrevMonth() {
     const t = new Date();
     return dateKey(new Date(t.getFullYear(), t.getMonth(), 0, 12));
@@ -376,7 +376,7 @@
     const after = k => countsAfter(cap.date, cap.when, k);
     const p = {
       cap: cap.total || 0, income: 0, fuelAccr: 0, wearAccr: 0,
-      fuelPaid: 0, repairPaid: 0, repairFromFund: 0, putIn: 0, rideExp: 0, personal: 0, saved: 0, adjust: 0,
+      fuelPaid: 0, repairPaid: 0, rideExp: 0, personal: 0, saved: 0, adjust: 0,
     };
     const cur = fuelModel(s);
     s.shifts.forEach(sh => {
@@ -388,9 +388,7 @@
     s.maint.forEach(m => {
       if (!after(m.date) || m.noMoney) return; // noMoney: chi phí đã ghi ở nơi khác (vd quẹt thẻ), chỉ lưu để làm mốc/tham khảo
       p.repairPaid += m.cost;
-      if (m.fromFund !== false) p.repairFromFund += m.cost; // mặc định trả từ quỹ để riêng
     });
-    s.fundPuts.forEach(f => { if (after(f.date)) p.putIn += f.amount; });
     s.expenses.forEach(e => {
       if (!after(e.date)) return;
       if (e.type === 'ride') p.rideExp += e.amount;
@@ -412,12 +410,7 @@
       }
     });
     p.expected = p.cap + p.income - p.fuelPaid - p.repairPaid - p.rideExp - p.personal + p.adjust + p.ledgerNet;
-    // Quỹ sửa xe: khấu hao trích theo km Grab − tiền bảo dưỡng/sửa xe đã trả (âm = đã chi vượt phần trích)
-    p.fund = (cap.fund || 0) + p.wearAccr - p.repairPaid;
-    // Tiền đang tách riêng (bên ngoài) cho quỹ bảo trì, và số cần tách thêm (>0) hoặc đã tách dư (<0)
-    p.envelope = (cap.fund || 0) + p.putIn - p.repairFromFund;
-    p.toSetAside = p.fund - p.envelope;
-    p.spendable = p.expected - Math.max(0, p.fund) - p.saved;
+    p.spendable = p.expected - p.saved;
     p.commuteFuel = p.fuelPaid - p.fuelAccr; // xăng đi làm + chênh lệch lượng xăng còn trong bình
     return p;
   }
@@ -441,7 +434,7 @@
     if (!keys.length) return null;
     keys.sort();
     const d = keyToDate(keys[0]); d.setDate(d.getDate() - 1);
-    return { date: dateKey(d), total: 0, fund: 0 };
+    return { date: dateKey(d), total: 0 };
   }
   // Các ca đã nhập nhưng nằm từ ngày chốt vốn Grab trở về trước: không được cộng vào Tiền Grab (đã coi là nằm trong vốn)
   function grabExcluded(s) {

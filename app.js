@@ -153,7 +153,7 @@
           <div class="metrics" style="margin-top:8px">
             <div class="metric"><div class="k">Tổng thu</div><div class="v">${fmtMoney(td.income)}</div></div>
             <div class="metric"><div class="k">Lãi chưa trừ hao mòn</div><div class="v ${sgn(td.profit + td.wear)}">${fmtSigned(td.profit + td.wear)}</div></div>
-            <div class="metric"><div class="k">Hao mòn (bỏ quỹ bảo trì)</div><div class="v">${fmtMoney(td.wear)}</div></div>
+            <div class="metric"><div class="k">Hao mòn (ước tính)</div><div class="v">${fmtMoney(td.wear)}</div></div>
             <div class="metric"><div class="k">Lãi sau hao mòn</div><div class="v ${sgn(td.profit)}">${fmtSigned(td.profit)}</div></div>
             <div class="metric"><div class="k">Km / giờ</div><div class="v">${fmtKm(td.km)} km ·${fmtDur(td.hours)}</div></div>
             <div class="metric"><div class="k">Lãi / giờ</div><div class="v">${fmtMoney(td.perHour)}</div></div>
@@ -268,7 +268,7 @@
         <div class="ln"><span>Thu (app${c.bonus ? ' + thưởng/tip' : ''})</span><b>${fmtMoney(c.income)}</b></div>
         <div class="ln"><span class="muted">− Xăng (ước theo km)</span><span>${fmtMoney(c.fuel)}</span></div>
         <div class="ln mid"><span>Lãi chưa trừ hao mòn</span><span class="${sgn(c.profit + c.wear)}">${fmtSigned(c.profit + c.wear)}</span></div>
-        <div class="ln"><span class="muted">− Hao mòn xe (bỏ vào quỹ bảo trì)</span><span>${fmtMoney(c.wear)}</span></div>
+        <div class="ln"><span class="muted">− Hao mòn xe (ước tính)</span><span>${fmtMoney(c.wear)}</span></div>
         <div class="ln sum"><span>Lãi sau hao mòn</span><span class="${sgn(c.profit)}">${fmtSigned(c.profit)}</span></div>
       </div>
       <div class="metrics" style="margin:14px 0">
@@ -302,8 +302,8 @@
     return money + head + `<section class="card tight">${html}</section>`;
   }
 
-  // ---- Tiền đang cầm, kiểm kê, quỹ sửa xe
-  const WALLETS = [['cash', 'Tiền mặt đang cầm'], ['income', 'Ví thu nhập Grab'], ['topup', 'Ví nạp Grab'], ['bank', 'Tài khoản ngân hàng'], ['fund', 'Quỹ bảo trì để riêng']];
+  // ---- Tiền đang cầm, kiểm kê
+  const WALLETS = [['cash', 'Tiền mặt đang cầm'], ['income', 'Ví thu nhập Grab'], ['topup', 'Ví nạp Grab'], ['bank', 'Tài khoản ngân hàng']];
 
   function cashCards() {
     const p = L.grabPot(S);                              // chạy được cả khi chưa nhập vốn (coi vốn = 0)
@@ -332,24 +332,9 @@
         ${p.adjust ? `<div class="ln"><span>± Điều chỉnh sau kiểm kê</span><span>${fmtSigned(p.adjust)}</span></div>` : ''}
         <div class="ln sum"><span>Tiền đang cầm</span><span>${fmtMoney(p.expected)}</span></div>
       </section>
-      <section class="card flow"><div class="eyebrow">Quỹ bảo trì (hao mòn xe)</div>
-        <div class="ln" style="margin-top:6px"><span>Đã trích <span class="muted small">(km Grab × ${fmtInt(S.settings.wearPerKm)}đ${cap.fund ? ', gồm quỹ đầu ' + fmtMoney(cap.fund) : ''})</span></span><span>${fmtMoney((cap.fund || 0) + p.wearAccr)}</span></div>
-        <div class="ln"><span>− Đã trả bảo dưỡng, sửa xe</span><span>${fmtMoney(p.repairPaid)}</span></div>
-        <div class="ln sum"><span>Cần có trong quỹ</span><span class="${p.fund < 0 ? 'neg' : ''}">${fmtMoney(p.fund)}</span></div>
-        <div class="ln"><span>Đang tách riêng <span class="muted small">(bên ngoài)</span></span><span>${fmtMoney(p.envelope)}</span></div>
-        ${p.toSetAside > 0.5
-        ? `<div class="alert" style="margin:8px 0 10px"><div>👉 <b>Cần tách thêm ${fmtMoney(p.toSetAside)}</b> ra để riêng cho bảo trì.</div></div>`
-        : p.toSetAside < -0.5
-          ? `<div class="alert ok" style="margin:8px 0 10px"><div>✅ Đã tách dư ${fmtMoney(-p.toSetAside)} so với cần có.</div></div>`
-          : `<div class="alert ok" style="margin:8px 0 10px"><div>✅ Quỹ đã đủ, không cần tách thêm.</div></div>`}
-        ${p.fund < 0 ? '<div class="hint" style="margin:-4px 0 8px">Quỹ đang âm: đã chi sửa xe vượt phần trích (phần thiếu lấy từ tiền khác, thường là phần đi làm). Có thể tăng hao mòn/km trong Cài đặt.</div>' : ''}
-        <button class="btn primary" data-act="put-fund">Đã tách tiền vào quỹ</button>
-        ${S.fundPuts.length ? `<div class="group-h" style="padding-left:0;margin-top:8px">Các lần đã tách gần đây</div>${sortedDesc(S.fundPuts, f => f.date + f.id).slice(0, 4).map(f => `<div class="kv"><span>${keyLabel(f.date)}</span><span><b>${fmtMoney(f.amount)}</b> <button type="button" class="chip" data-act="del-put" data-id="${f.id}">Xoá</button></span></div>`).join('')}` : ''}
-      </section>
-      <section class="card"><div class="eyebrow">Chia ra</div>
-        <div class="kv" style="margin-top:6px"><span>🔧 Quỹ bảo trì (cần giữ)</span><b>${fmtMoney(Math.max(0, p.fund))}</b></div>
-        <div class="kv"><span>🏦 Để dành</span><b>${fmtMoney(p.saved)}</b></div>
-        <div class="kv" style="border-top:1.5px solid var(--text);margin-top:6px;padding-top:10px"><span style="color:var(--text);font-weight:700">✅ Tiền tiêu được</span><b class="${sgn(p.spendable)}" style="font-size:18px">${fmtMoney(p.spendable)}</b></div>
+      <section class="card">
+        ${p.saved > 0 ? `<div class="kv"><span>🏦 Để dành</span><b>${fmtMoney(p.saved)}</b></div>
+        <div class="kv" style="border-top:1.5px solid var(--text);margin-top:6px;padding-top:10px"><span style="color:var(--text);font-weight:700">✅ Tiền tiêu được</span><b class="${sgn(p.spendable)}" style="font-size:18px">${fmtMoney(p.spendable)}</b></div>` : ''}
         <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-act="check-money">Kiểm kê tiền thật</button><button class="btn" data-act="set-capital">${implicit ? 'Nhập vốn' : 'Sửa vốn đầu'}</button></div>
         ${last.length ? `<div class="group-h" style="padding-left:0;margin-top:8px">Các lần kiểm kê gần đây</div>${last.map(c => `<div class="kv"><span>${fmtDM(c.at)} ${fmtTime(c.at)} · thực tế ${fmtMoney(c.total)}</span><b class="${c.diff === 0 ? 'pos' : sgn(c.diff)}">${c.diff === 0 ? 'khớp' : fmtSigned(c.diff)}</b></div>`).join('')}` : ''}
       </section>`;
@@ -373,7 +358,6 @@
       ${dateField('f-date', 'Ngày của con số này', c ? c.date : L.lastDayOfPrevMonth())}
       ${whenSeg(c ? c.when : 'end')}
       ${moneyField('f-cap', 'Tổng tiền Grab bạn đang có', c ? c.total : '', { focus: true })}
-      ${moneyField('f-capfund', 'Trong đó đã để dành cho sửa xe (tuỳ chọn)', c && c.fund ? c.fund : '', { hint: 'Bỏ trống nếu quỹ sửa xe bắt đầu từ 0.' })}
       <div class="err" id="err"></div>
       <button class="btn primary lg" data-act="save-capital">Lưu</button>
       ${c ? '<button class="link danger" data-act="del-capital">Xoá vốn ban đầu</button>' : ''}`);
@@ -566,8 +550,7 @@
       ${moneyField('f-amt', 'Chi phí (gồm công)', m ? m.cost : '', { focus: !m })}
       ${intField('f-odo', 'Odo lúc làm', m ? m.odo : L.lastKnownOdo(S), { suf: 'km' })}
       <label class="check"><input type="checkbox" id="f-nomoney" ${m && m.noMoney ? 'checked' : ''}> Không trừ vào Tiền Grab (chi phí đã ghi ở nơi khác, vd quẹt thẻ)</label>
-      <div class="hint" style="margin:-4px 0 8px">Chỉ lưu làm mốc bảo dưỡng và để tham khảo hao mòn; không vào Tiền Grab, quỹ bảo trì và báo cáo thu chi, nên không bị tính hai lần.</div>
-      <label class="check"><input type="checkbox" id="f-fromfund" ${!m || m.fromFund !== false ? 'checked' : ''}> Trả từ quỹ bảo trì để riêng</label>
+      <div class="hint" style="margin:-4px 0 8px">Chỉ lưu làm mốc bảo dưỡng và để tham khảo hao mòn; không vào Tiền Grab và báo cáo thu chi, nên không bị tính hai lần.</div>
       ${textField('f-note', 'Ghi chú (tuỳ chọn)', m ? m.note : '', 'loại nhớt, tiệm...')}
       ${dateField('f-date', 'Ngày', m ? m.date : L.todayKey())}
       <div class="err" id="err"></div>
@@ -664,7 +647,7 @@
       <div class="tile"><div class="k">CÒN LẠI</div>${tv(sgn(m.remain), (m.remain > 0 ? '+' : '') + tileMoney(m.remain))}</div></div>
       <div class="tiles two">
         <div class="tile"><div class="k">LÃI CHƯA TRỪ HAO MÒN</div>${tv(sgn(m.profit + m.wear), (m.profit + m.wear > 0 ? '+' : '') + tileMoney(m.profit + m.wear))}</div>
-        <div class="tile"><div class="k">HAO MÒN → QUỸ BẢO TRÌ</div>${tv('', tileMoney(m.wear))}</div></div>`;
+        <div class="tile"><div class="k">HAO MÒN ƯỚC TÍNH</div>${tv('', tileMoney(m.wear))}</div></div>`;
 
     // Tầng 1
     const segs = [['Xăng', m.fuel, '#e0a030'], ['Hao mòn xe', m.wear, '#8e7cc3'], ['Chi chạy xe khác', m.rideExp, '#4a90d9'], ['Lợi nhuận', Math.max(0, m.profit), 'var(--pos)']];
@@ -679,7 +662,7 @@
       <div class="ln"><span>− Chi phí chạy xe khác</span><span>${fmtMoney(m.rideExp)}</span></div>
       ${catLines(m.rideCats)}
       <div class="ln mid"><span>Lãi chưa trừ hao mòn</span><span class="${sgn(m.profit + m.wear)}">${fmtSigned(m.profit + m.wear)}</span></div>
-      <div class="ln"><span>− Hao mòn xe <span class="muted small">(bỏ riêng vào quỹ bảo trì)</span></span><span>${fmtMoney(m.wear)}</span></div>
+      <div class="ln"><span>− Hao mòn xe <span class="muted small">(ước tính theo km)</span></span><span>${fmtMoney(m.wear)}</span></div>
       <div class="ln sum"><span>Lợi nhuận sau hao mòn</span><span class="${sgn(m.profit)}">${fmtSigned(m.profit)}</span></div></section>`;
 
     // Tầng 2
@@ -1201,7 +1184,7 @@
       </section>
       <section class="card"><h2>Cách tính</h2><div class="muted small" style="line-height:1.55">
         <b>Xăng của ca</b> = km × mức tiêu hao (lít/100km) × giá xăng của ngày chạy.<br>
-        <b>Hao mòn</b> = km × đơn giá hao mòn, bỏ vào quỹ bảo trì.<br>
+        <b>Hao mòn</b> = km × đơn giá hao mòn (chỉ để ước tính lãi, không phải tiền cần tách riêng).<br>
         <b>Lãi ca</b> = thu ròng app + tip/thưởng − xăng − hao mòn.<br>
         Hóa đơn xăng và bảo dưỡng không cộng thẳng vào chi phí lãi (đã tính theo km); chúng dùng để học mức tiêu hao và là tiền thật ra khỏi túi ở "Tiền Grab" và sổ tài chính.</div></section>`;
   }
@@ -1674,35 +1657,13 @@
     save(); closeSheet(); render(); toast('Ok, 7 ngày nữa mình nhắc lại');
   };
 
-  // Quỹ bảo trì: ghi lần tách tiền ra để riêng (chuyển tiền, không phải khoản chi)
-  A['put-fund'] = () => {
-    const p = L.grabPot(S);
-    const sug = p ? Math.max(0, Math.round(p.toSetAside)) : '';
-    openSheet('Đã tách tiền vào quỹ bảo trì', `
-      ${moneyField('f-amt', 'Số tiền đã tách riêng', sug || '', { focus: true, hint: 'Gợi ý là số cần tách thêm. Đây chỉ là chuyển tiền sang chỗ để riêng, không phải khoản chi.' })}
-      ${dateField('f-date', 'Ngày', L.todayKey())}
-      <div class="err" id="err"></div>
-      <button class="btn primary lg" data-act="save-put">Lưu</button>`);
-  };
-  A['save-put'] = () => {
-    const amount = getInt('f-amt');
-    if (isNaN(amount) || amount <= 0) return setErr('Nhập số tiền đã tách.');
-    S.fundPuts.push({ id: uid(), date: val('f-date') || L.todayKey(), amount });
-    save(); closeSheet(); render(); toast('Đã ghi ' + fmtMoney(amount) + ' vào quỹ bảo trì');
-  };
-  A['del-put'] = el => {
-    if (!confirm('Xoá lần tách tiền này?')) return;
-    S.fundPuts = S.fundPuts.filter(x => x.id !== el.dataset.id); save(); render();
-  };
-
   // Vốn ban đầu, kiểm kê
   A['set-capital'] = () => capitalSheet();
   A['save-capital'] = () => {
-    const total = getInt('f-cap'), fund = getInt('f-capfund') || 0, date = val('f-date');
+    const total = getInt('f-cap'), date = val('f-date');
     if (!date) return setErr('Chọn ngày chốt.');
     if (isNaN(total)) return setErr('Nhập tổng vốn ban đầu.');
-    if (fund > total) return setErr('Phần để dành cho sửa xe không thể lớn hơn tổng vốn.');
-    S.capital = { date, total, fund, when: val('f-when') === 'start' ? 'start' : 'end' };
+    S.capital = { date, total, when: val('f-when') === 'start' ? 'start' : 'end' };
     save(); closeSheet(); render(); toast('Đã lưu vốn ban đầu');
   };
   A['del-capital'] = () => {
@@ -1799,7 +1760,7 @@
     const cost = getInt('f-amt'), odo = getInt('f-odo');
     if (isNaN(cost) || cost < 0) return setErr('Nhập chi phí.');
     if (isNaN(odo) || odo <= 0) return setErr('Nhập odo lúc làm.');
-    const data = { item: val('f-item') || 'Khác', cost, odo, note: val('f-note'), date: val('f-date') || L.todayKey(), fromFund: $('#f-fromfund').checked, noMoney: $('#f-nomoney').checked };
+    const data = { item: val('f-item') || 'Khác', cost, odo, note: val('f-note'), date: val('f-date') || L.todayKey(), noMoney: $('#f-nomoney').checked };
     if (el.dataset.id) Object.assign(S.maint.find(x => x.id === el.dataset.id), data);
     else S.maint.push(Object.assign({ id: uid() }, data));
     save(); closeSheet(); render(); toast('Đã lưu bảo dưỡng');

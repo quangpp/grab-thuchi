@@ -1,6 +1,6 @@
 # Sổ Tài Chính
 
-Web app (PWA) quản lý tài chính cá nhân: tài khoản (ví, ngân hàng), giao dịch thu/chi/chuyển, báo cáo theo tháng và danh mục; kèm mục **Grab** (ca chạy, lãi/km, xe, quỹ bảo trì) tự liên thông vào sổ. Dữ liệu lưu ngay trên điện thoại (localStorage), không gửi đi đâu.
+Web app (PWA) quản lý tài chính cá nhân: tài khoản (ví, ngân hàng), giao dịch thu/chi/chuyển, báo cáo theo tháng và danh mục; kèm mục **Grab** (ca chạy, lãi/km, xe, bảo dưỡng) tự liên thông vào sổ. Dữ liệu lưu ngay trên điện thoại (localStorage), không gửi đi đâu.
 
 ## Chạy thử trên máy tính
 
