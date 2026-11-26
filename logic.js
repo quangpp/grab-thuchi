@@ -38,7 +38,7 @@
       settings: Object.assign({}, DEFAULT_SETTINGS),
       active: null,      // { start: ISO, odoStart: number }
       shifts: [],        // { id,start,end,odoStart,odoEnd,net,bonus,trips,fuelRate,wearRate }
-      fills: [],         // { id,date,amount,odo,liters,full }
+      fills: [],         // { id,date,amount,odo,liters,full,acct } — acct: tài khoản/thẻ trả tiền; bỏ trống = 'grab'; 'none' = không trừ ở đâu
       expenses: [],      // { id,date,amount,type,category,note }
       maint: [],         // { id,date,odo,item,cost,note }
       odoLog: [],        // { id,date,odo }
@@ -384,7 +384,7 @@
       const c = shiftCalc(sh, s, cur);
       p.income += c.income; p.fuelAccr += c.fuel; p.wearAccr += c.wear;
     });
-    s.fills.forEach(f => { if (after(f.date)) p.fuelPaid += f.amount; });
+    s.fills.forEach(f => { if (after(f.date) && fillAcct(f) === GRAB_ACCT) p.fuelPaid += f.amount; });
     s.maint.forEach(m => {
       if (!after(m.date) || m.noMoney) return; // noMoney: chi phí đã ghi ở nơi khác (vd quẹt thẻ), chỉ lưu để làm mốc/tham khảo
       p.repairPaid += m.cost;
@@ -411,8 +411,15 @@
     });
     p.expected = p.cap + p.income - p.fuelPaid - p.repairPaid - p.rideExp - p.personal + p.adjust + p.ledgerNet;
     p.spendable = p.expected - p.saved;
-    p.commuteFuel = p.fuelPaid - p.fuelAccr; // xăng đi làm + chênh lệch lượng xăng còn trong bình
     return p;
+  }
+
+  // ---------- Tiền đổ xăng lấy từ đâu ----------
+  const fillAcct = f => f.acct || GRAB_ACCT; // lần đổ cũ (chưa chọn) vẫn tính vào Tiền Grab
+  // Mọi khoản làm đổi số dư: giao dịch ở sổ + tiền đổ xăng trả bằng tài khoản/thẻ khác Tiền Grab
+  function moneyMoves(s) {
+    return s.tx.concat(s.fills.filter(f => fillAcct(f) !== GRAB_ACCT && f.acct !== 'none')
+      .map(f => ({ id: 'fill:' + f.id, type: 'expense', acct: f.acct, amount: f.amount, date: f.date })));
   }
 
   // ---------- Sổ tài chính: tài khoản, số dư, giao dịch ----------
@@ -474,7 +481,7 @@
     const start = s.ledger && s.ledger.start;
     const byId = {};
     s.accounts.forEach(a => { byId[a.id] = Number(a.opening) || 0; });
-    s.tx.forEach(t => {
+    moneyMoves(s).forEach(t => {
       if (start && !countsAfter(start, s.ledger.when, t.date)) return;
       if (t.type === 'income') { if (t.acct in byId) byId[t.acct] += t.amount; }
       else if (t.type === 'expense') { if (t.acct in byId) byId[t.acct] -= t.amount; }
@@ -509,6 +516,7 @@
         if (!isAcct(t.acct) || !isAcct(t.to)) issues.push({ kind: 'tx', id: t.id, msg: 'Chuyển tiền có tài khoản không còn tồn tại' });
       } else if (!isPayer(t.acct)) issues.push({ kind: 'tx', id: t.id, msg: 'Giao dịch thuộc tài khoản không còn tồn tại' });
     });
+    s.fills.forEach(f => { if (f.acct && f.acct !== 'none' && !isPayer(f.acct)) issues.push({ kind: 'fill', id: f.id, msg: 'Lần đổ xăng trả bằng tài khoản không còn tồn tại' }); });
     s.recurring.forEach(r => { if (r.acct && !isPayer(r.acct)) issues.push({ kind: 'rec', id: r.id, msg: 'Khoản định kỳ "' + r.name + '" trỏ tới tài khoản không còn tồn tại' }); });
     if (s.ledger && s.ledger.lastAcct && !isPayer(s.ledger.lastAcct)) issues.push({ kind: 'last', id: 'last', msg: 'Tài khoản dùng gần nhất không còn tồn tại' });
     issues.forEach(i => { i.sev = 'error'; });
@@ -542,7 +550,7 @@
   // trả nợ (giảm phần gốc), quẹt thẻ (tăng), hoàn tiền về thẻ (giảm).
   function debtBalance(s, d) {
     let b = Number(d.opening) || 0;
-    s.tx.forEach(t => {
+    moneyMoves(s).forEach(t => {
       if (!countsAfter(d.asOf, d.when, t.date)) return;
       if (t.type === 'debtpay' && t.debt === d.id) b -= (t.principal != null ? t.principal : t.amount);
       else if (t.type === 'expense' && t.acct === d.id) b += t.amount;
@@ -555,7 +563,7 @@
   // Tính lại từ giao dịch mỗi lần nên sửa/xoá giao dịch là số tự khớp.
   function cardInterestBase(s, d, date, excludeId) {
     let b = Number(d.opening) || 0;
-    s.tx.forEach(t => {
+    moneyMoves(s).forEach(t => {
       if (t.id === excludeId || t.date > date || !countsAfter(d.asOf, d.when, t.date)) return;
       if (t.type === 'debtpay' && t.debt === d.id) b -= (t.principal != null ? t.principal : t.amount);
       else if (t.type === 'expense' && t.acct === d.id) b += t.amount;
@@ -728,7 +736,7 @@
       const c = shiftCalc(sh, s, model);
       out.push({ src: 'shift', id: sh.id, date: k, type: 'income', amount: c.income, cat: 'Grab · thu nhập ca', note: '', acct: GRAB_ACCT, at: sh.start });
     });
-    s.fills.forEach(f => { if (inR(f.date)) out.push({ src: 'fill', id: f.id, date: f.date, type: 'expense', amount: f.amount, cat: 'Grab · Xăng', note: '', acct: GRAB_ACCT }); });
+    s.fills.forEach(f => { if (inR(f.date)) out.push({ src: 'fill', id: f.id, date: f.date, type: 'expense', amount: f.amount, cat: 'Grab · Xăng', note: '', acct: fillAcct(f) }); });
     s.maint.forEach(m => { if (inR(m.date) && !m.noMoney) out.push({ src: 'maint', id: m.id, date: m.date, type: 'expense', amount: m.cost, cat: 'Grab · Bảo dưỡng xe', note: m.item, acct: GRAB_ACCT }); });
     s.expenses.forEach(e => {
       if (!inR(e.date) || e.type === 'saving') return;
@@ -805,7 +813,7 @@
   const api = {
     DEFAULT_SETTINGS, CATS, TYPE_LABEL, MAINT_ITEMS, TX_CATS, ACCT_KINDS, GRAB_ACCT,
     checkIntegrity, repairIntegrity,
-    debtBalance, cardInterestBase, cardInterestHistory, cardPctPerYear, loanSchedule, loanNextPayment, loanPayoff, loanDue, loanLastCut, loanInterest,
+    debtBalance, moneyMoves, fillAcct, cardInterestBase, cardInterestHistory, cardPctPerYear, loanSchedule, loanNextPayment, loanPayoff, loanDue, loanLastCut, loanInterest,
     addDays, daysBetween, monthDay, shiftWeekend, nextMonthly, recurringDates, upcoming, buildIcs,
     ledgerReady, countsAfter, ledgerCounts, accountBalances, unifiedEntries, periodReport, grabPot, grabExcluded, implicitCapital, mergeState,
     emptyState, migrate, dateKey, keyToDate, todayKey,

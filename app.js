@@ -324,8 +324,7 @@
     return `${warn}<section class="card flow"><div class="eyebrow">Tiền Grab đang cầm (theo app)</div>
         <div class="ln" style="margin-top:6px"><span>Vốn ban đầu <span class="muted small">(${implicit ? 'chưa nhập, tính từ 0' : 'chốt ' + cd + ', ' + whenLabel(cap.when)})</span></span><span>${fmtMoney(p.cap)}</span></div>
         <div class="ln"><span>+ Thu nhập các ca <span class="muted small">(thu ròng + tip)</span></span><span>${fmtMoney(p.income)}</span></div>
-        <div class="ln"><span>− Xăng đã đổ</span><span>${fmtMoney(p.fuelPaid)}</span></div>
-        ${p.fuelPaid > 0 ? `<div class="ln sub"><span>trong đó xăng đi làm / chênh tồn bình</span><span>${fmtMoney(p.commuteFuel)}</span></div>` : ''}
+        <div class="ln"><span>− Xăng đổ bằng Tiền Grab</span><span>${fmtMoney(p.fuelPaid)}</span></div>
         <div class="ln"><span>− Bảo dưỡng, sửa xe đã trả</span><span>${fmtMoney(p.repairPaid)}</span></div>
         <div class="ln"><span>− Chi chạy xe khác</span><span>${fmtMoney(p.rideExp)}</span></div>
         <div class="ln"><span>− Chi cá nhân</span><span>${fmtMoney(p.personal)}</span></div>
@@ -477,7 +476,7 @@
     const shownFills = sortedDesc(S.fills, f => f.date + String(f.odo || 0).padStart(8, '0')).slice(0, 15);
     const fillList = shownFills.length ? `<section class="card tight"><div class="group-h">Lịch sử đổ xăng</div>${shownFills.map(f => {
       const st = stat[f.id];
-      return `<button class="row" data-act="edit-fill" data-id="${f.id}"><div class="l"><b>${keyLabel(f.date)}</b><span class="muted">${f.odo > 0 ? 'odo ' + fmtInt(f.odo) : 'chưa có odo'} · ${f.pricePerL ? fmtInt(f.pricePerL) + 'đ/lít' : 'chưa có giá/lít'} · ${L.litersOf(f, S).toFixed(2).replace('.', ',')} lít${f.full === false ? ' · chưa đầy' : ''}${st ? ` · ${fmtInt(st.km)} km · ${st.l100.toFixed(2).replace('.', ',')} L/100km` : ''}</span></div><div class="amt">${fmtMoney(f.amount)}</div></button>`;
+      return `<button class="row" data-act="edit-fill" data-id="${f.id}"><div class="l"><b>${keyLabel(f.date)}</b><span class="muted">${f.odo > 0 ? 'odo ' + fmtInt(f.odo) : 'chưa có odo'} · ${f.pricePerL ? fmtInt(f.pricePerL) + 'đ/lít' : 'chưa có giá/lít'} · ${L.litersOf(f, S).toFixed(2).replace('.', ',')} lít${f.full === false ? ' · chưa đầy' : ''} · ${esc(acctName(L.fillAcct(f)))}${st ? ` · ${fmtInt(st.km)} km · ${st.l100.toFixed(2).replace('.', ',')} L/100km` : ''}</span></div><div class="amt">${fmtMoney(f.amount)}</div></button>`;
     }).join('')}</section>` : '';
 
     const maint = sortedDesc(S.maint, m => m.odo).slice(0, 15);
@@ -521,8 +520,17 @@
   }
 
   function fillSheet(f) {
+    // Không mặc định Tiền Grab: nhớ lựa chọn lần trước, lần đầu phải tự chọn (trừ khi chỉ có một nơi để chọn)
+    const opts = acctOptions(true);
+    if (!opts.some(o => o.id === GRAB)) opts.push({ id: GRAB, name: 'Tiền Grab' });
+    const want = f ? L.fillAcct(f) : S.settings.fillAcct;
+    const sel = opts.some(o => o.id === want) ? want : (opts.length === 1 ? opts[0].id : (f && f.acct === 'none' ? 'none' : ''));
+    if (sel === 'none') opts.push({ id: 'none', name: 'Không trừ tài khoản nào' });
     openSheet(f ? 'Sửa lần đổ xăng' : 'Đổ xăng', `
       ${moneyField('f-amt', 'Số tiền đổ', f ? f.amount : '', { focus: !f })}
+      <label class="l">Trả bằng</label>
+      <div class="chips" id="ch-fpay">${opts.map(o => `<button type="button" class="chip ${o.id === sel ? 'on' : ''}" data-act="pick-acct" data-role="fpay" data-id="${o.id}">${esc(o.name)}</button>`).join('')}</div>
+      <input type="hidden" id="f-fpay" value="${esc(sel)}">
       ${moneyField('f-ppl', 'Giá xăng trên máy bơm (đ/lít)', f ? (f.pricePerL || (f.liters > 0 ? Math.round(f.amount / f.liters) : '')) : L.priceOn(S, L.todayKey()), { noZeros: true })}
       <div class="hint" id="fill-liters" style="margin:-6px 0 12px"></div>
       ${intField('f-odo', 'Odo lúc đổ', f && f.odo > 0 ? f.odo : '', { suf: 'km', ph: fmtInt(L.lastKnownOdo(S)), hint: 'Nên nhập mỗi lần để app học mức tiêu hao. Không nhớ thì để trống: khoản này vẫn tính vào tiền xăng đã đổ.' })}
@@ -691,7 +699,7 @@
   // ---------------------------------------------------------------- sổ tài chính (Tổng quan, Giao dịch, Tài khoản)
   const debtOf = id => S.debts.find(d => d.id === id);
   const debtLabel = d => (d.kind === 'card' ? 'Thẻ ' : '') + d.name;
-  const acctName = id => (id === GRAB ? 'Tiền Grab' : debtOf(id) ? debtLabel(debtOf(id)) : ((S.accounts.find(a => a.id === id) || {}).name || '(đã xoá)'));
+  const acctName = id => (id === GRAB ? 'Tiền Grab' : id === 'none' ? 'Không trừ tài khoản nào' : debtOf(id) ? debtLabel(debtOf(id)) : ((S.accounts.find(a => a.id === id) || {}).name || '(đã xoá)'));
   const dmOf = k => k.slice(8) + '/' + k.slice(5, 7);
   const tileNum = n => (Math.abs(n) >= 1e7 ? fmtShort(n) + 'đ' : fmtMoney(n));
   const tileHtml = (cls, text) => `<div class="v ${cls}" style="font-size:${text.length > 9 ? 14 : 17}px">${text}</div>`;
@@ -737,7 +745,7 @@
       sub = [acctName(e.acct), e.note].filter(Boolean).join(' · ');
       amt = (e.type === 'income' ? '+' : '−') + fmtMoney(e.amount); cls = e.type === 'income' ? 'pos' : 'neg';
     }
-    if (e.src === 'tx' && S.ledger.start && !L.ledgerCounts(S, e.date)) sub += (sub ? ' · ' : '') + 'chỉ tham khảo, không tính vào số dư';
+    if ((e.src === 'tx' || (e.src === 'fill' && e.acct !== GRAB && e.acct !== 'none')) && S.ledger.start && !L.ledgerCounts(S, e.date)) sub += (sub ? ' · ' : '') + 'chỉ tham khảo, không tính vào số dư';
     return `<button class="row" data-act="${act}" data-id="${e.id}"><div class="l"><b>${esc(title)}</b><span class="muted">${esc(sub)}</span></div><div class="amt ${cls}">${amt}</div></button>`;
   }
 
@@ -1072,7 +1080,7 @@
     const errors = issues.filter(i => i.sev === 'error'), warns = issues.filter(i => i.sev !== 'error');
     const b = L.accountBalances(S);
     const refOnly = S.tx.filter(t => S.ledger.start && !t.adj && !L.ledgerCounts(S, t.date)).length;
-    const rowOf = (i, cls) => `<button class="row" ${i.kind === 'tx' ? `data-act="edit-tx" data-id="${i.id}"` : i.kind === 'rec' ? `data-act="edit-rec" data-id="${i.id}"` : 'data-act="tab" data-tab="plan"'}><div class="l"><b class="${cls}">${cls === 'neg' ? '⚠️' : 'ℹ️'} ${esc(i.msg)}</b><span class="muted">Bấm để xem và sửa</span></div></button>`;
+    const rowOf = (i, cls) => `<button class="row" ${i.kind === 'tx' ? `data-act="edit-tx" data-id="${i.id}"` : i.kind === 'rec' ? `data-act="edit-rec" data-id="${i.id}"` : i.kind === 'fill' ? `data-act="edit-fill" data-id="${i.id}"` : 'data-act="tab" data-tab="plan"'}><div class="l"><b class="${cls}">${cls === 'neg' ? '⚠️' : 'ℹ️'} ${esc(i.msg)}</b><span class="muted">Bấm để xem và sửa</span></div></button>`;
     return `<section class="card"><h2>Kiểm tra dữ liệu</h2>
       ${errors.length ? `<div class="alert bad" style="margin:0 0 8px"><div><b>${errors.length} chỗ lệch:</b> số tiền của các giao dịch này không được tính ở đâu cả.</div></div><div class="card tight" style="box-shadow:none;margin:0 0 10px">${errors.map(i => rowOf(i, 'neg')).join('')}</div>` : ''}
       ${warns.length ? `<div class="alert" style="margin:0 0 8px"><div><b>${warns.length} điểm cần xem:</b> số liệu vẫn được tính nhưng có thể chưa đúng ý bạn.</div></div><div class="card tight" style="box-shadow:none;margin:0 0 10px">${warns.map(i => rowOf(i, '')).join('')}</div>` : ''}
@@ -1370,6 +1378,8 @@
   A['del-debt'] = el => {
     const id = el.dataset.id;
     const n = S.tx.filter(t => t.debt === id || t.acct === id).length;
+    const nf = S.fills.filter(x => x.acct === id).length;
+    if (nf) { toast(`Thẻ đang dùng cho ${nf} lần đổ xăng, hãy đổi tài khoản ở các lần đó trước`); return; }
     if (n) { toast(`Khoản nợ đang có ${n} giao dịch, hãy xoá chúng trước`); return; }
     if (!confirm('Xoá khoản nợ này?')) return;
     S.debts = S.debts.filter(d => d.id !== id); save(); closeSheet(); render(); toast('Đã xoá khoản nợ');
@@ -1494,6 +1504,8 @@
   A['del-account'] = el => {
     const id = el.dataset.id;
     const n = S.tx.filter(t => t.acct === id || t.to === id).length;
+    const nf = S.fills.filter(x => x.acct === id).length;
+    if (nf) { toast(`Tài khoản đang dùng cho ${nf} lần đổ xăng, hãy đổi tài khoản ở các lần đó trước`); return; }
     if (n) { toast(`Tài khoản đang có ${n} giao dịch, hãy xoá hoặc chuyển chúng trước`); return; }
     if (!confirm('Xoá tài khoản này?')) return;
     S.accounts = S.accounts.filter(a => a.id !== id);
@@ -1730,7 +1742,11 @@
     if (!isNaN(ppl) && (ppl < 5000 || ppl > 100000)) return setErr('Giá/lít không hợp lệ (ví dụ 20.890).');
     const date = val('f-date') || L.todayKey();
     const pricePerL = isNaN(ppl) ? null : ppl;
+    const acct = val('f-fpay');
+    if (!acct) return setErr('Chọn tài khoản trả tiền xăng.');
+    if (acct !== 'none') S.settings.fillAcct = acct;
     const data = {
+      acct,
       amount, odo: isNaN(odo) || odo <= 0 ? null : odo, pricePerL,
       liters: pricePerL ? Math.round(amount / pricePerL * 100) / 100 : null, // số lít = tiền ÷ giá/lít
       full: $('#f-full').checked, date,
@@ -1872,6 +1888,8 @@
     if (!confirm('Làm lại sổ tài chính?\n\nSẽ xoá: ' + S.accounts.length + ' tài khoản, ' + S.tx.length + ' giao dịch, ' + S.debts.length + ' khoản nợ, ' + S.recurring.length + ' khoản định kỳ và ngày bắt đầu sổ.\nGIỮ NGUYÊN: ca chạy, đổ xăng, bảo dưỡng, vốn Grab.\n\nKhông thể hoàn tác (hãy xuất file sao lưu trước).')) return;
     if (!confirm('Chắc chắn xoá sổ tài chính để nhập lại?')) return;
     S.accounts = []; S.tx = []; S.debts = []; S.recurring = [];
+    S.fills.forEach(f => { if (f.acct && f.acct !== GRAB) f.acct = 'none'; });
+    delete S.settings.fillAcct;
     S.ledger = { start: null, lastAcct: null };
     save(); render(true); toast('Đã xoá sổ tài chính. Hãy thêm tài khoản và đặt ngày bắt đầu sổ.');
   };
